@@ -3,7 +3,7 @@ name: Publish site
 on:
   push:
     branches:
-      - "main"
+      - "revisions_OM"
   workflow_dispatch:
 
 jobs:
