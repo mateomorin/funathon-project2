@@ -88,7 +88,7 @@ The notebook loads this file automatically at startup with `load_dotenv()`, maki
 
 ---
 
-# Load data
+# Load the data
 
 The dataset consists of **synthetic labelled examples** generated for the NAF 2025 nomenclature.
 Each row contains a short text description (`label`) and the corresponding NAF code (`code`).
@@ -110,7 +110,7 @@ from dotenv import load_dotenv
 load_dotenv(override=True)
 ```
 
-## Question 2 — Load the dataset from MinIO
+## Question 2 — Load the dataset from s3
 
 Use Polars to load the parquet file directly from this public URL:
 
@@ -206,13 +206,11 @@ print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
 
 ## Question 2 — Encode the target labels
 
-The `code` column contains strings like `"47.11A"`. Neural networks require integer targets, so we need to map each unique NAF code to an integer index. Encode the `code` column of each split using `LabelEncoder` from `sklearn.preprocessing`, and keep the fitted encoder — you will need it later to convert integer predictions back to NAF code strings.
+The `code` column contains strings like `"47.11A"`. Neural networks do not understand strings and require integer targets (1, 2, 3...), so we need to map each unique NAF code to an integer index. Encode the `code` column of each split using `LabelEncoder` from `sklearn.preprocessing`, and keep the fitted encoder — you will need it later to convert integer predictions back to NAF code strings.
 
-::: {.callout-warning collapse="true"}
-## Watch out for data leakage
-Always fit the `LabelEncoder` on **all** codes (`df['code']`), not just the training set.
-If a code appears only in the validation or test set and the encoder has never seen it,
-`transform()` will raise an error.
+::: {.callout-warning collapse="false"}
+## Watch out for unseen categories!
+Always fit the `LabelEncoder` on **all** codes present in the data, not just codes present in the training set. Why that? Imagine that one code is very rare and is present only in the validation set or in the test. If the `LabelEncoder` is trained on the training set alone, it will not be able to map this rare code to an integer, and when you apply the `LabelEncoder` to this code (for instance when evaluating the model) you will get an error.
 :::
 
 ```{python}
