@@ -541,10 +541,16 @@ ttc.pytorch_model.eval()
 # Prediction and explainability
 
 Once the model is trained, we can use it to predict NACE codes for new text descriptions.
+Beyond a simple prediction, we also want to understand why a given NACE code was predicted — specifically, which words in the input text contributed the most to the decision.
+
+You can refer to this[tutorial](https://inseefrlab.github.io/torchTextClassifiers/tutorials/explainability.html) on explainability for more details.
+
 To understand which tokens drove a prediction, we use **captum's `LayerIntegratedGradients`**,
 applied to the model's embedding matrix. This method computes the gradient of the output
 with respect to each input token embedding, integrated along a path from a baseline — attributing
 a score to each token that reflects its contribution to the predicted class.
+
+You can see the documentation for `LayerIntegratedGradients` [here](https://captum.ai/api/layer.html#layer-integrated-gradients)
 
 ::: {.callout-important}
 ## On the interpretation of integrated gradients
@@ -559,8 +565,8 @@ treated as an exploratory tool rather than a definitive causal explanation.
 
 ## Question 1 — Generate top-5 predictions with confidence scores
 
-Sample some text from the `X_text` array in a variable called `example_texts`.
-Call `ttc.predict(np.array(example_texts), top_k=5, explain_with_captum=True)`. Print the main fields of the prediction. 
+Sample a few texts from the `X_text` array into a variable called`example_texts`.
+Then call `ttc.predict(np.array(example_texts), top_k=5, explain_with_captum=True)` and print the main fields of the resulting dictionary.
 
 <details>
 <summary>Clue here</summary>
