@@ -1,3 +1,13 @@
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cuda"
+url = "https://download.pytorch.org/whl/cu124"
+explicit = true
+
 [project]
 name = "funathon-project2"
 version = "0.1.0"
@@ -34,24 +44,15 @@ dependencies = [
     "hydra-core>=1.3.2",
 ]
 
-[[tool.uv.index]]
-name = "pytorch-cpu"
-url = "https://download.pytorch.org/whl/cpu"
-explicit = true
-
-[[tool.uv.index]]
-name = "pytorch-cuda"
-url = "https://download.pytorch.org/whl/cu124"
-explicit = true
-
-[tool.uv.sources]
-torch = { index = "pytorch-cpu" }
-torchtextclassifiers = { git = "https://github.com/InseeFrLab/torchTextClassifiers.git" }
-
 [project.optional-dependencies]
 gpu = [
     "torch"
 ]
 
-[tool.uv.sources.gpu]
-torch = { index = "pytorch-cuda" }
+[tool.uv.sources]
+torchtextclassifiers = { git = "https://github.com/InseeFrLab/torchTextClassifiers.git" }
+
+torch = [
+  { index = "pytorch-cuda", marker = "extra == 'gpu'" },
+  { index = "pytorch-cpu" }
+]
