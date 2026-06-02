@@ -10,17 +10,9 @@ from omegaconf import DictConfig
 import mlflow
 import polars as pl
 from dotenv import load_dotenv
-from sklearn.model_selection import train_test_split
 from sklearn.preprocessing import LabelEncoder
 from torchTextClassifiers import ModelConfig, TrainingConfig, torchTextClassifiers
 from torchTextClassifiers.tokenizers import WordPieceTokenizer
-from torchTextClassifiers.utilities.plot_explainability import (
-    figshow,
-    map_attributions_to_char,
-    map_attributions_to_word,
-    plot_attributions_at_char,
-    plot_attributions_at_word,
-)
 from torchTextClassifiers.value_encoder import ValueEncoder
 
 logger = logging.getLogger(__name__)
