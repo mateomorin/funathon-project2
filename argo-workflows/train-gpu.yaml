@@ -69,10 +69,10 @@ spec:
             cd funathon-project2/
 
             # Setup
-            uv sync
+            uv sync --extra gpu
 
             # Run MLflow experiment
-            uv run train.py data.synth_split={{inputs.parameters.synth_split}} data.sample_frac=1 training_config.accelerator=gpu
+            uv run train.py data.synth_split={{inputs.parameters.synth_split}} data.sample_frac=1 training_config.accelerator=cuda
 
         volumeMounts:
           - mountPath: /dev/shm
