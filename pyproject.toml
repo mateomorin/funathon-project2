@@ -54,5 +54,5 @@ torchtextclassifiers = { git = "https://github.com/InseeFrLab/torchTextClassifie
 
 torch = [
   { index = "pytorch-cuda", marker = "extra == 'gpu'" },
-  { index = "pytorch-cpu" }
+  { index = "pytorch-cpu", marker = "extra != 'gpu'" }
 ]
