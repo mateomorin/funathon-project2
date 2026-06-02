@@ -24,7 +24,7 @@ spec:
           {"synth_split":0.7},
           {"synth_split":0.8},
           {"synth_split":0.9},
-          {"synth_split":1.0},
+          {"synth_split":1.0}
             ]'
   templates:
     - name: main
@@ -72,7 +72,7 @@ spec:
             uv sync
 
             # Run MLflow experiment
-            uv run train.py data.synth_split={{inputs.parameters.synth_split}} data.sample_frac=1
+            uv run train.py data.synth_split={{inputs.parameters.synth_split}} data.sample_frac=1 training_config.accelerator=gpu
 
         volumeMounts:
           - mountPath: /dev/shm
@@ -82,13 +82,13 @@ spec:
           - name: AWS_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
-                name: my-s3-creds
-                key: accessKey
+                name: s3-read-only
+                key: AWS_ACCESS_KEY_ID
           - name: AWS_SECRET_ACCESS_KEY
             valueFrom:
               secretKeyRef:
-                name: my-s3-creds
-                key: secretKey
+                name: s3-read-only
+                key: AWS_SECRET_ACCESS_KEY
           - name: AWS_DEFAULT_REGION
             value: us-east-1
           - name: AWS_S3_ENDPOINT

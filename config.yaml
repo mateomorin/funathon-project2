@@ -18,3 +18,4 @@ training_config:
   batch_size: 128
   lr: 5e-4
   patience_early_stopping: 2
+  accelerator: cpu
