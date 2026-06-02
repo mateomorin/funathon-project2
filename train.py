@@ -3,10 +3,14 @@
 # %%
 import logging
 import random
+import glob
+import re
 
 import s3fs
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
+import torch
+import numpy as np
 import mlflow
 import polars as pl
 from dotenv import load_dotenv
@@ -20,12 +24,27 @@ logger = logging.getLogger(__name__)
 load_dotenv(override=True)
 
 
+def flatten_dict(d: dict, parent_key: str = '', sep: str = '.') -> dict:
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
+
+
 @hydra.main(
     version_base=None,
     config_path="",
     config_name="config"
     )
 def main(cfg: DictConfig):
+    torch.manual_seed(42)
+    random.seed(42)
+    np.random.seed(42)
+
     fs = s3fs.S3FileSystem(
         endpoint_url="https://minio.lab.sspcloud.fr",
         client_kwargs={"region_name": "us-east-1"},
@@ -134,12 +153,9 @@ def main(cfg: DictConfig):
     # Train
 
     with mlflow.start_run():
-        mlflow.log_params({
-            "vocab_size": cfg["tokenizer"]["vocab_size"],
-            "embedding_dim": cfg["model"]["embedding_dim"],
-            "epochs": training_config.num_epochs,
-            "batch_size": training_config.batch_size
-        })
+        cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+        flat_cfg = flatten_dict(cfg_dict)
+        mlflow.log_params(flat_cfg)
 
         ttc.train(
             X_train,
@@ -174,7 +190,30 @@ def main(cfg: DictConfig):
         logger.info(
             f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test))}/{len(y_test)} correct)"
         )
+
+        logger.info("Logging metrics...")
+
         mlflow.log_metric("test_accuracy", accuracy)
+
+        log_files = glob.glob("lightning_logs/version_*/metrics.csv")
+        if log_files:
+            def get_version_number(filepath):
+                # Cherche les chiffres juste après "version_"
+                match = re.search(r"version_(\d+)", filepath)
+                return int(match.group(1)) if match else -1
+
+            latest_csv = max(log_files, key=get_version_number)
+            logger.info(f"Reading {latest_csv}...")
+            df_metrics = pl.read_csv(latest_csv)
+
+            # Parcourir les lignes pour envoyer les métriques à MLflow
+            for row in df_metrics.iter_rows(named=True):
+                step = int(row["step"])
+
+                for metric_name, value in row.items():
+                    # On ignore les colonnes de compteurs et les valeurs vides (NaN)
+                    if metric_name not in ["step", "epoch"] and value is not None and not (isinstance(value, float) and value != value):
+                        mlflow.log_metric(key=metric_name, value=value, step=step)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,99 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: augmented-codif-ape-
+spec:
+  serviceAccountName: workflow
+  volumes:
+    - name: dshm
+      emptyDir:
+        medium: Memory
+        sizeLimit: 64Gi
+  entrypoint: main
+  arguments:
+    parameters:
+      - name: training-conf-list
+        value: '[
+          {"synth_split":0},
+          {"synth_split":0.1},
+          {"synth_split":0.2},
+          {"synth_split":0.3},
+          {"synth_split":0.4},
+          {"synth_split":0.5},
+          {"synth_split":0.6},
+          {"synth_split":0.7},
+          {"synth_split":0.8},
+          {"synth_split":0.9},
+          {"synth_split":1.0},
+            ]'
+  templates:
+    - name: main
+      # Entrypoint DAG template
+      dag:
+        tasks:
+          - name: run-training-with-params
+            template: run-training-wt
+            arguments:
+              parameters:
+                - name: synth_split
+                  value: "{{item.synth_split}}"
+
+            # Pass the inputs to the task using "withParam"
+            withParam: "{{workflow.parameters.training-conf-list}}"
+
+    # Worker template for task-1
+    - name: run-training-wt
+      inputs:
+        parameters:
+          - name: synth_split
+      container:
+        image: inseefrlab/onyxia-vscode-pytorch:py3.13.5-gpu
+        imagePullPolicy: Always
+        resources:
+          limits:
+            nvidia.com/gpu: 1
+            cpu: 30000m
+            memory: 50Gi
+          requests:
+              nvidia.com/gpu: 1  # Add GPU to requests too
+              cpu: 50m
+              memory: 1Gi
+        command: ["/bin/bash", -c]
+        args:
+          - |
+            set -e  # Exit on error
+            set -x  # Print commands for debugging
+
+            # Clone repository and submodules
+            git clone -b main https://github.com/mateomorin/funathon-project2.git
+            cd funathon-project2/
+
+            # Setup
+            uv sync
+
+            # Run MLflow experiment
+            uv run train.py data.synth_split={{inputs.parameters.synth_split}} data.sample_frac=1
+
+        volumeMounts:
+          - mountPath: /dev/shm
+            name: dshm
+        env:
+          # env var for s3 connexion
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: my-s3-creds
+                key: accessKey
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: my-s3-creds
+                key: secretKey
+          - name: AWS_DEFAULT_REGION
+            value: us-east-1
+          - name: AWS_S3_ENDPOINT
+            value: minio.lab.sspcloud.fr
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: https://minio.lab.sspcloud.fr
+          - name: MLFLOW_TRACKING_URI
+            value: https://projet-ape-mlflow.user.lab.sspcloud.fr/
