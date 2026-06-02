@@ -4,6 +4,9 @@
 import logging
 import random
 
+import s3fs
+import hydra
+from omegaconf import DictConfig
 import mlflow
 import polars as pl
 from dotenv import load_dotenv
@@ -23,188 +26,164 @@ from torchTextClassifiers.value_encoder import ValueEncoder
 logger = logging.getLogger(__name__)
 
 load_dotenv(override=True)
-# %%
 
 
-df = pl.read_parquet(
-    "https://minio.lab.sspcloud.fr/projet-formation/diffusion/funathon/2026/project2/generation_None_temp08.parquet"
-)
-
-print(df.head())
-print(f"Total rows: {len(df)}")
-
-
-# %%
-n_classes = df["code"].n_unique()
-print(n_classes)
-
-
-# %%
-
-train_df, tmp_df = train_test_split(df, test_size=0.30, random_state=42)
-val_df, test_df = train_test_split(tmp_df, test_size=0.50, random_state=42)
-
-X_train, y_train = train_df["label"].to_numpy(), train_df["code"].to_numpy()
-X_val, y_val = val_df["label"].to_numpy(), val_df["code"].to_numpy()
-X_test, y_test = test_df["label"].to_numpy(), test_df["code"].to_numpy()
-
-print(f"Train: {len(train_df)} | Val: {len(val_df)} | Test: {len(test_df)}")
-
-
-# %%
-all_codes = set(df["code"])
-train_codes = set(train_df["code"])
-missing = all_codes - train_codes
-
-if missing:
-    print(f"WARNING: {len(missing)} code(s) missing from training set: {missing}")
-else:
-    print(f"OK — all {len(all_codes)} codes appear in the training set.")
-
-# %%
-encoder = LabelEncoder()
-encoder.fit(train_df["code"].to_numpy())
-
-value_encoder = ValueEncoder(label_encoder=encoder)
-# %%
-
-# %%
-tokenizer = WordPieceTokenizer(vocab_size=5000, output_dim=10)
-tokenizer.train(X_train)
-
-print("Output tensor size:", tokenizer.tokenize(X_train[0]).input_ids.shape)
-print(
-    "Tokens:",
-    tokenizer.tokenizer.convert_ids_to_tokens(
-        tokenizer.tokenize(X_train[0]).input_ids.squeeze(0)
-    ),
-)
-print("Vocabulary size:", tokenizer.vocab_size)
-
-# %%
-embedding_dim = 96
-
-model_config = ModelConfig(
-    embedding_dim=embedding_dim,
-    num_classes=n_classes,
-)
-
-ttc = torchTextClassifiers(
-    tokenizer=tokenizer,
-    model_config=model_config,
-    value_encoder=value_encoder,
-)
-# %%
-mlflow.set_experiment("funathon-2026-project2")
-mlflow.pytorch.autolog()
-
-training_config = TrainingConfig(
-    num_epochs=1,
-    batch_size=128,
-    lr=5 * 1e-4,
-    patience_early_stopping=5,
-)
-
-with mlflow.start_run() as run:
-    # This should take approximately 1-2mn
-    ttc.train(
-        X_train,
-        y_train,
-        training_config=training_config,
-        X_val=X_val,
-        y_val=y_val,
-        verbose=True,
+@hydra.main(
+    version_base=None,
+    config_path="",
+    config_name="config"
+    )
+def main(cfg: DictConfig):
+    fs = s3fs.S3FileSystem(
+        endpoint_url="https://minio.lab.sspcloud.fr",
+        client_kwargs={"region_name": "us-east-1"},
     )
 
-    mlflow.log_artifacts(
-        training_config.save_path,  # local folder produced by ttc.train()
-        artifact_path="model_artifacts",
+    synth_split = cfg["data"]["synth_split"]
+    assert 0 <= synth_split <= 1
+
+    # Load data
+
+    with fs.open(cfg["data"]["synth_path"]) as f:
+        df_synth = pl.read_parquet(f)
+        df_synth.drop_in_place("name")
+
+    with fs.open(cfg["data"]["original_val_path"]) as f:
+        df_val = pl.read_parquet(f)
+        df_val = df_val.rename(mapping={"naf2025": "code", "libelle": "label"})[["code", "label"]]
+        df_val = df_val.with_columns(
+            (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
+        )
+
+    with fs.open(cfg["data"]["original_test_path"]) as f:
+        df_test = pl.read_parquet(f)
+        df_test = df_test.rename(mapping={"naf2025": "code", "libelle": "label"})[["code", "label"]]
+        df_test = df_test.with_columns(
+            (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
+        )
+
+    if synth_split == 1:
+        df_train = df_synth
+    else:
+        with fs.open(cfg["data"]["original_train_path"]) as f:
+            df_train = pl.read_parquet(f)
+            df_train = df_train.rename(mapping={"naf2025": "code", "libelle": "label"})[["code", "label"]]
+            df_train = df_train.with_columns(
+                (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
+            )
+
+        f = cfg["data"]["synth_split"]
+        synth_size = f * len(df_train) / (1-f)
+        df_train = pl.concat([df_train, df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)])
+
+    df_guaranteed = df_train.unique(subset=["code"])
+    df_remaining = df_train.join(df_guaranteed, on=df_train.columns, how="anti")
+    df_remaining_sampled = df_remaining.sample(fraction=cfg["data"]["sample_frac"], seed=42)
+    df_train = pl.concat([df_guaranteed, df_remaining_sampled])
+    df_train = df_train.sample(fraction=1.0, shuffle=True, seed=42)
+    df_val = df_val.sample(fraction=cfg["data"]["sample_frac"])
+    df_test = df_test.sample(fraction=cfg["data"]["sample_frac"])
+
+    n_classes = df_train["code"].n_unique()
+    logger.info(f"Number of classes: {n_classes}")
+
+    X_train, y_train = df_train["label"].to_numpy(), df_train["code"].to_numpy()
+    X_val, y_val = df_val["label"].to_numpy(), df_val["code"].to_numpy()
+    X_test, y_test = df_test["label"].to_numpy(), df_test["code"].to_numpy()
+
+    logger.info(f"Train: {len(df_train)} | Val: {len(df_val)} | Test: {len(df_test)}")
+
+    # Codes
+
+    all_codes = set(df_synth["code"])
+    train_codes = set(df_train["code"])
+    missing = all_codes - train_codes
+
+    if missing:
+        logger.warn(f"{len(missing)} code(s) missing from training set")
+    else:
+        logger.info(f"All {len(all_codes)} codes appear in the training set.")
+
+    encoder = LabelEncoder()
+    encoder.fit(y_train)
+
+    value_encoder = ValueEncoder(label_encoder=encoder)
+
+    # Tokenization
+
+    tokenizer = WordPieceTokenizer(vocab_size=cfg["tokenizer"]["vocab_size"], output_dim=cfg["tokenizer"]["output_dim"])
+    tokenizer.train(X_train)
+
+    logger.info(f"Output tensor size: {tokenizer.tokenize(X_train[0]).input_ids.shape}")
+    logger.info(
+        f"Tokens: {tokenizer.tokenizer.convert_ids_to_tokens(tokenizer.tokenize(X_train[0]).input_ids.squeeze(0))}",
     )
-# %%
+    logger.info(f"Vocabulary size: {tokenizer.vocab_size}")
 
-local_dir = mlflow.artifacts.download_artifacts(
-    f"runs:/{run.info.run_id}/model_artifacts"
-)
+    # Model
 
-# Rebuild the torchTextClassifiers object from the downloaded files
-ttc_loaded = torchTextClassifiers.load(local_dir)
+    embedding_dim = cfg["model"]["embedding_dim"]
 
-print(ttc_loaded)
+    model_config = ModelConfig(
+        embedding_dim=embedding_dim,
+        num_classes=n_classes,
+    )
 
-# %%
-import s3fs
+    ttc = torchTextClassifiers(
+        tokenizer=tokenizer,
+        model_config=model_config,
+        value_encoder=value_encoder,
+    )
 
-fs = s3fs.S3FileSystem(
-    anon=True,  # public bucket
-    endpoint_url="https://minio.lab.sspcloud.fr",
-)
+    mlflow.set_experiment("augmented-codif-ape")
 
-local_dir = "./mlflow-artifacts/"
-fs.get(
-    "projet-funathon/diffusion/mlflow-artifacts/",
-    local_dir,
-    recursive=True,
-)
-# Rebuild the torchTextClassifiers object from the downloaded files
-ttc = torchTextClassifiers.load(local_dir)
+    training_config = TrainingConfig(**cfg["training_config"])
 
-ttc.pytorch_model.eval()
+    # Train
 
-# %%
-random_indices = random.sample(range(len(X_test)), 3)
-example_texts = X_test[random_indices]
-example_true_codes = y_test[random_indices]
-print(example_texts)
-top_k = 5
-results = ttc.predict(example_texts, top_k=top_k, explain_with_captum=True)
-for i, text in enumerate(example_texts):
-    predicted_codes = [results["prediction"][i][k] for k in range(top_k)]
-    confidence = [results["confidence"][i][k].item() for k in range(top_k)]
-    print(f"\nText: {text}")
-    print(f"  True code: {example_true_codes[i]}")
-    for code, conf in zip(predicted_codes, confidence):
-        print(f"  {code}  (confidence: {conf:.3f})")
+    with mlflow.start_run():
+        mlflow.log_params({
+            "vocab_size": cfg["tokenizer"]["vocab_size"],
+            "embedding_dim": cfg["model"]["embedding_dim"],
+            "epochs": training_config.num_epochs,
+            "batch_size": training_config.batch_size
+        })
 
-# %%
-results_test = ttc.predict(X_test, top_k=1)
-preds = results_test["prediction"].squeeze(1)
-accuracy = (preds == y_test).mean()
-print(
-    f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test))}/{len(y_test)} correct)"
-)
-# %%
-text_idx = 0
-top_k_idx = 0
-text_sample = example_texts[text_idx]
-offsets = results["offset_mapping"][text_idx]
-word_ids = results["word_ids"][text_idx]
-predicted_code = results["prediction"][text_idx][top_k_idx]
+        ttc.train(
+            X_train,
+            y_train,
+            training_config=training_config,
+            X_val=X_val,
+            y_val=y_val,
+            verbose=True,
+        )
 
-attributions = results["captum_attributions"][text_idx][top_k_idx]  # (seq_len,)
+        # Eval
 
-words, word_attributions = map_attributions_to_word(
-    attributions.unsqueeze(0), text_sample, word_ids, offsets
-)
-char_attributions = map_attributions_to_char(
-    attributions.unsqueeze(0), offsets, text_sample
-)
+        ttc.pytorch_model.eval()
 
-titles = [f"Attributions for NACE code {predicted_code}"]
+        random_indices = random.sample(range(len(X_test)), 3)
+        example_texts = X_test[random_indices]
+        example_true_codes = y_test[random_indices]
+        logger.info(example_texts)
+        top_k = 5
+        results = ttc.predict(example_texts, top_k=top_k, explain_with_captum=True)
+        for i, text in enumerate(example_texts):
+            predicted_codes = [results["prediction"][i][k] for k in range(top_k)]
+            confidence = [results["confidence"][i][k].item() for k in range(top_k)]
+            logger.info(f"\nText: {text}")
+            logger.info(f"  True code: {example_true_codes[i]}")
+            for code, conf in zip(predicted_codes, confidence):
+                logger.info(f"  {code}  (confidence: {conf:.3f})")
 
-figshow(
-    plot_attributions_at_char(
-        text=text_sample,
-        attributions_per_char=char_attributions,
-        titles=titles,
-    )[0]
-)
+        results_test = ttc.predict(X_test, top_k=1)
+        preds = results_test["prediction"].squeeze(1)
+        accuracy = (preds == y_test).mean()
+        logger.info(
+            f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test))}/{len(y_test)} correct)"
+        )
+        mlflow.log_metric("test_accuracy", accuracy)
 
-figshow(
-    plot_attributions_at_word(
-        text=text_sample,
-        words=words.values(),
-        attributions_per_word=word_attributions,
-        titles=titles,
-    )[0]
-)
-# %%
+
+if __name__ == "__main__":
+    main()

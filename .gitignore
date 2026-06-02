@@ -2,6 +2,8 @@
 **/*.quarto_ipynb
 _site/
 
+outputs/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

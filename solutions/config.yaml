@@ -1,0 +1,20 @@
+data:
+  synth_path: "s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet"
+  original_train_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet"
+  original_val_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_val.parquet"
+  original_test_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet"
+  synth_split: 0.2
+  sample_frac: 0.01
+
+tokenizer:
+  output_dim: 80
+  vocab_size: 10000
+
+model:
+  embedding_dim: 200
+
+training_config:
+  num_epochs: 5
+  batch_size: 128
+  lr: 5e-4
+  patience_early_stopping: 2
