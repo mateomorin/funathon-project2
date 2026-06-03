@@ -3,8 +3,6 @@
 # %%
 import logging
 import random
-import glob
-import re
 
 import s3fs
 import hydra
@@ -151,6 +149,7 @@ def main(cfg: DictConfig):
     training_config = TrainingConfig(**cfg["training_config"])
 
     # Train
+    mlflow.pytorch.autolog()
 
     with mlflow.start_run():
         cfg_dict = OmegaConf.to_container(cfg, resolve=True)
@@ -194,26 +193,6 @@ def main(cfg: DictConfig):
         logger.info("Logging metrics...")
 
         mlflow.log_metric("test_accuracy", accuracy)
-
-        log_files = glob.glob("lightning_logs/version_*/metrics.csv")
-        if log_files:
-            def get_version_number(filepath):
-                # Cherche les chiffres juste après "version_"
-                match = re.search(r"version_(\d+)", filepath)
-                return int(match.group(1)) if match else -1
-
-            latest_csv = max(log_files, key=get_version_number)
-            logger.info(f"Reading {latest_csv}...")
-            df_metrics = pl.read_csv(latest_csv)
-
-            # Parcourir les lignes pour envoyer les métriques à MLflow
-            for row in df_metrics.iter_rows(named=True):
-                step = int(row["step"])
-
-                for metric_name, value in row.items():
-                    # On ignore les colonnes de compteurs et les valeurs vides (NaN)
-                    if metric_name not in ["step", "epoch"] and value is not None and not (isinstance(value, float) and value != value):
-                        mlflow.log_metric(key=metric_name, value=value, step=step)
 
 
 if __name__ == "__main__":
