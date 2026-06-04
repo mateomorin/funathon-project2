@@ -10,8 +10,27 @@ spec:
         medium: Memory
         sizeLimit: 64Gi
   entrypoint: main
+  arguments:
+    parameters:
+      - name: different_lr
+        value: 1e-3,5e-4,1e-4
+      - name: different_split
+        value: 0,0.1,0.2,0.3,0.4,0.5,1
+      - name: different_preprocessing
+        value: true,false
+      - name: data_naive
+        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet
+      - name: data_retext
+        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
   templates:
     - name: main
+      inputs:
+        parameters:
+        - name: different_lr
+        - name: different_split
+        - name: different_preprocessing
+        - name: data_naive
+        - name: data_retext
       container:
         image: inseefrlab/onyxia-vscode-pytorch:py3.13.5-gpu
         imagePullPolicy: Always
@@ -38,8 +57,11 @@ spec:
             uv sync --extra gpu
 
             # Run MLflow experiment
-            uv run train.py -m data.synth_split=0,0.1,0.2,0.3,0.4,1 data.sample_frac=1 training_config.accelerator=cuda
-            uv run train.py -m data.synth_split=0,0.1,0.2,0.3,0.4,1 data.sample_frac=1 training_config.accelerator=cuda data.synth_path=s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet
+            uv run train.py -m data.sample_frac=1 training_config.accelerator=cuda \
+                training_config.lr={{inputs.parameters.different_lr}} \
+                tokenizer.preprocessed={{inputs.parameters.different_preprocessing}} \
+                data.synth_split={{inputs.parameters.different_split}} \
+                data.synth_path={{inputs.parameters.data_naive}},{{inputs.parameters.data_retext}}
 
         volumeMounts:
           - mountPath: /dev/shm

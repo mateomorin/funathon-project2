@@ -9,6 +9,7 @@ data:
 tokenizer:
   output_dim: 80
   vocab_size: 10000
+  preprocessed: true
 
 model:
   embedding_dim: 200

@@ -40,6 +40,34 @@ def sample_with_all_codes(df, code_column, sample_frac):
     return pl.concat([df_guaranteed, df_remaining_sampled])
 
 
+def preprocess(df: pl.DataFrame, text_column: str, stopwords: list) -> pl.DataFrame:
+    """
+    Nettoie et normalise une colonne textuelle d'un DataFrame Polars
+    pour préparer une codification automatique.
+
+    Retourne un nouveau DataFrame (Polars ne gère pas le 'inplace').
+    """
+    stopwords_pattern = r"\b(" + "|".join(stopwords) + r")\b"
+
+    cleaned_expr = (
+        pl.col(text_column)
+        .cast(pl.String)
+        .str.to_lowercase()
+        .str.replace_all(r"[éèêë]", "e")
+        .str.replace_all(r"[àâä]", "a")
+        .str.replace_all(r"[ùûü]", "u")
+        .str.replace_all(r"[îï]", "i")
+        .str.replace_all(r"[ôö]", "o")
+        .str.replace_all(r"[ç]", "c")
+        .str.replace_all(r"[^\w\s]", " ")
+        .str.replace_all(stopwords_pattern, " ")
+        .str.replace_all(r"\s+", " ")
+        .str.strip_chars()
+    )
+
+    return df.with_columns(cleaned_expr)
+
+
 @hydra.main(
     version_base=None,
     config_path="",
@@ -102,6 +130,17 @@ def main(cfg: DictConfig):
     df_train = df_train.sample(fraction=1.0, shuffle=True, seed=42)
     df_val = df_val.sample(fraction=cfg["data"]["sample_frac"])
     df_test = df_test.sample(fraction=cfg["data"]["sample_frac"])
+
+    if cfg["tokenizer"]["preprocessed"]:
+        import nltk
+        nltk.download('stopwords')
+        from nltk.corpus import stopwords
+
+        french_stopwords = stopwords.words('french')
+
+        df_train = preprocess(df_train, text_column="label", stopwords=french_stopwords)
+        df_val = preprocess(df_val, text_column="label", stopwords=french_stopwords)
+        df_test = preprocess(df_test, text_column="label", stopwords=french_stopwords)
 
     n_classes = df_train["code"].n_unique()
     logger.info(f"Number of classes: {n_classes}")
