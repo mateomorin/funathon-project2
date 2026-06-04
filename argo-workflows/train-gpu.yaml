@@ -38,7 +38,8 @@ spec:
             uv sync --extra gpu
 
             # Run MLflow experiment
-            uv run train.py -m data.synth_split=0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1 data.sample_frac=1 training_config.accelerator=cuda
+            uv run train.py -m data.synth_split=0,0.1,0.2,0.3,0.4,1 data.sample_frac=1 training_config.accelerator=cuda
+            uv run train.py -m data.synth_split=0,0.1,0.2,0.3,0.4,1 data.sample_frac=1 training_config.accelerator=cuda data.synth_path=s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet
 
         volumeMounts:
           - mountPath: /dev/shm

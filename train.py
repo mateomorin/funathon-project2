@@ -83,6 +83,11 @@ def main(cfg: DictConfig):
 
         f = cfg["data"]["synth_split"]
         synth_size = f * len(df_train) / (1-f)
+
+        if synth_size > len(df_synth) * 1.1:
+            logger.warn(f"synth_split is too high to sample enough labels: {synth_size} synth labels wanted vs {len(df_synth)} synth labels.")
+            return
+
         df_train = pl.concat([df_train, df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)])
 
     df_guaranteed = df_train.unique(subset=["code"])
