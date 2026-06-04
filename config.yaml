@@ -4,7 +4,7 @@ data:
   original_val_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_val.parquet"
   original_test_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet"
   synth_split: 0.2
-  sample_frac: 0.01
+  sample_frac: 0.05
 
 tokenizer:
   output_dim: 80

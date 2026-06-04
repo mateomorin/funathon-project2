@@ -33,6 +33,13 @@ def flatten_dict(d: dict, parent_key: str = '', sep: str = '.') -> dict:
     return dict(items)
 
 
+def sample_with_all_codes(df, code_column, sample_frac):
+    df_guaranteed = df.unique(subset=[code_column])
+    df_remaining = df.join(df_guaranteed, on=df.columns, how="anti")
+    df_remaining_sampled = df_remaining.sample(fraction=sample_frac, seed=42)
+    return pl.concat([df_guaranteed, df_remaining_sampled])
+
+
 @hydra.main(
     version_base=None,
     config_path="",
@@ -80,9 +87,10 @@ def main(cfg: DictConfig):
             df_train = df_train.with_columns(
                 (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
             )
+            df_train = sample_with_all_codes(df_train, "code", 0.1)
 
         f = cfg["data"]["synth_split"]
-        synth_size = f * len(df_train) / (1-f)
+        synth_size = int(f * len(df_train) / (1-f))
 
         if synth_size > len(df_synth) * 1.1:
             logger.warn(f"synth_split is too high to sample enough labels: {synth_size} synth labels wanted vs {len(df_synth)} synth labels.")
@@ -90,10 +98,7 @@ def main(cfg: DictConfig):
 
         df_train = pl.concat([df_train, df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)])
 
-    df_guaranteed = df_train.unique(subset=["code"])
-    df_remaining = df_train.join(df_guaranteed, on=df_train.columns, how="anti")
-    df_remaining_sampled = df_remaining.sample(fraction=cfg["data"]["sample_frac"], seed=42)
-    df_train = pl.concat([df_guaranteed, df_remaining_sampled])
+    df_train = sample_with_all_codes(df_train, "code", cfg["data"]["sample_frac"])
     df_train = df_train.sample(fraction=1.0, shuffle=True, seed=42)
     df_val = df_val.sample(fraction=cfg["data"]["sample_frac"])
     df_test = df_test.sample(fraction=cfg["data"]["sample_frac"])
