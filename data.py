@@ -1,5 +1,4 @@
 import logging
-import traceback
 
 from dotenv import load_dotenv
 import polars as pl
@@ -20,12 +19,11 @@ def fetch_original_data(path):
 
 
 def sample_with_all_codes(df, code_column, sample_size):
-    df_guaranteed = df.unique(subset=[code_column], keep="first")
+    df_guaranteed = df.unique(subset=[code_column], keep="first", maintain_order=True)
     df_remaining = df.join(df_guaranteed, on=df.columns, how="anti", maintain_order="left_right")
     remaining_size = sample_size - len(df_guaranteed)
     if remaining_size <= 0:
         logger.warn(f"The sampling size {sample_size} is smaller than the number of unique codes {len(df_guaranteed)}.")
-        logger.warn(traceback.print_tb())
         return df_guaranteed
     df_remaining_sampled = df_remaining.sample(n=remaining_size, seed=42)
     return pl.concat([df_guaranteed, df_remaining_sampled]).sample(fraction=1.0, seed=42)
@@ -72,13 +70,8 @@ def fixed_original_size_sampling(cfg):
         subdf_synth = df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)
         df_train = pl.concat([df_train, subdf_synth])
 
-    df_train = sample_with_all_codes(
-        df=df_train,
-        code_column="code",
-        sample_size=round(cfg["injection"]["sample_frac"] * len(df_train))
-    )
-    df_val = df_val.sample(fraction=cfg["injection"]["sample_frac"], shuffle=True, seed=42)
-    df_test = df_test.sample(fraction=cfg["injection"]["sample_frac"], shuffle=True, seed=42)
+    df_val = df_val.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
+    df_test = df_test.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
 
     return df_train, df_val, df_test
 
@@ -151,6 +144,9 @@ def fixed_final_size_sampling(cfg):
 
         df_train = pl.concat([df_real, df_synth])
         df_train = df_train.sample(fraction=1.0, shuffle=True, seed=42)
+
+    df_val = df_val.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
+    df_test = df_test.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
 
     return df_train, df_val, df_test
 

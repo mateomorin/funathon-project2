@@ -42,6 +42,12 @@ def main(cfg: DictConfig):
     random.seed(42)
     np.random.seed(42)
 
+    torch.use_deterministic_algorithms(True)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(42)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+
     # Data
 
     injection_method = cfg["injection"]["method"]
@@ -169,6 +175,8 @@ def main(cfg: DictConfig):
         logger.info("Logging metrics...")
 
         mlflow.log_metric("test_accuracy", accuracy)
+
+    return df_train, df_val, df_test, ttc
 
 
 if __name__ == "__main__":
