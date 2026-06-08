@@ -94,14 +94,14 @@ def main(cfg: DictConfig):
 
     with fs.open(cfg["data"]["original_val_path"]) as f:
         df_val = pl.read_parquet(f)
-        df_val = df_val.rename(mapping={"naf2025": "code", "libelle": "label"})[["code", "label"]]
+        df_val = df_val.rename(mapping={"nace2025": "code", "libelle": "label"})[["code", "label"]]
         df_val = df_val.with_columns(
             (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
         )
 
     with fs.open(cfg["data"]["original_test_path"]) as f:
         df_test = pl.read_parquet(f)
-        df_test = df_test.rename(mapping={"naf2025": "code", "libelle": "label"})[["code", "label"]]
+        df_test = df_test.rename(mapping={"nace2025": "code", "libelle": "label"})[["code", "label"]]
         df_test = df_test.with_columns(
             (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
         )
@@ -111,7 +111,7 @@ def main(cfg: DictConfig):
     else:
         with fs.open(cfg["data"]["original_train_path"]) as f:
             df_train = pl.read_parquet(f)
-            df_train = df_train.rename(mapping={"naf2025": "code", "libelle": "label"})[["code", "label"]]
+            df_train = df_train.rename(mapping={"nace2025": "code", "libelle": "label"})[["code", "label"]]
             df_train = df_train.with_columns(
                 (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
             )
