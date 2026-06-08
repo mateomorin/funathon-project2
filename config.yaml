@@ -3,8 +3,13 @@ data:
   original_train_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet"
   original_val_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_val.parquet"
   original_test_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet"
+
+injection:
+  method: fixed_final_size      # or fixed_original_size
   synth_split: 0.2
-  sample_frac: 0.05
+  sample_frac: 0.05             # to reduce overall size for small dev frameworks
+  final_size: 5000             # for fixed_final_size
+  subtrain_size : 50000         # for fixed_original_size to reduce training size
 
 tokenizer:
   output_dim: 80

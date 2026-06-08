@@ -1,21 +1,20 @@
 """This script is directly runnable using uv run solutions/1-ttc.py"""
 
-# %%
 import logging
 import random
 
-import s3fs
 import hydra
 from omegaconf import DictConfig, OmegaConf
 import torch
 import numpy as np
 import mlflow
-import polars as pl
 from dotenv import load_dotenv
 from sklearn.preprocessing import LabelEncoder
 from torchTextClassifiers import ModelConfig, TrainingConfig, torchTextClassifiers
 from torchTextClassifiers.tokenizers import WordPieceTokenizer
 from torchTextClassifiers.value_encoder import ValueEncoder
+
+import data
 
 logger = logging.getLogger(__name__)
 
@@ -33,41 +32,6 @@ def flatten_dict(d: dict, parent_key: str = '', sep: str = '.') -> dict:
     return dict(items)
 
 
-def sample_with_all_codes(df, code_column, sample_frac):
-    df_guaranteed = df.unique(subset=[code_column])
-    df_remaining = df.join(df_guaranteed, on=df.columns, how="anti")
-    df_remaining_sampled = df_remaining.sample(fraction=sample_frac, seed=42)
-    return pl.concat([df_guaranteed, df_remaining_sampled])
-
-
-def preprocess(df: pl.DataFrame, text_column: str, stopwords: list) -> pl.DataFrame:
-    """
-    Nettoie et normalise une colonne textuelle d'un DataFrame Polars
-    pour préparer une codification automatique.
-
-    Retourne un nouveau DataFrame (Polars ne gère pas le 'inplace').
-    """
-    stopwords_pattern = r"\b(" + "|".join(stopwords) + r")\b"
-
-    cleaned_expr = (
-        pl.col(text_column)
-        .cast(pl.String)
-        .str.to_lowercase()
-        .str.replace_all(r"[éèêë]", "e")
-        .str.replace_all(r"[àâä]", "a")
-        .str.replace_all(r"[ùûü]", "u")
-        .str.replace_all(r"[îï]", "i")
-        .str.replace_all(r"[ôö]", "o")
-        .str.replace_all(r"[ç]", "c")
-        .str.replace_all(r"[^\w\s]", " ")
-        .str.replace_all(stopwords_pattern, " ")
-        .str.replace_all(r"\s+", " ")
-        .str.strip_chars()
-    )
-
-    return df.with_columns(cleaned_expr)
-
-
 @hydra.main(
     version_base=None,
     config_path="",
@@ -78,58 +42,20 @@ def main(cfg: DictConfig):
     random.seed(42)
     np.random.seed(42)
 
-    fs = s3fs.S3FileSystem(
-        endpoint_url="https://minio.lab.sspcloud.fr",
-        client_kwargs={"region_name": "us-east-1"},
-    )
+    # Data
 
-    synth_split = cfg["data"]["synth_split"]
-    assert 0 <= synth_split <= 1
-
-    # Load data
-
-    with fs.open(cfg["data"]["synth_path"]) as f:
-        df_synth = pl.read_parquet(f)
-        df_synth.drop_in_place("name")
-
-    with fs.open(cfg["data"]["original_val_path"]) as f:
-        df_val = pl.read_parquet(f)
-        df_val = df_val.rename(mapping={"nace2025": "code", "libelle": "label"})[["code", "label"]]
-        df_val = df_val.with_columns(
-            (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
-        )
-
-    with fs.open(cfg["data"]["original_test_path"]) as f:
-        df_test = pl.read_parquet(f)
-        df_test = df_test.rename(mapping={"nace2025": "code", "libelle": "label"})[["code", "label"]]
-        df_test = df_test.with_columns(
-            (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
-        )
-
-    if synth_split == 1:
-        df_train = df_synth
+    injection_method = cfg["injection"]["method"]
+    if injection_method == "fixed_final_size":
+        df_train, df_val, df_test = data.fixed_final_size_sampling(cfg)
+    elif injection_method == "fixed_original_size":
+        df_train, df_val, df_test = data.fixed_original_size_sampling(cfg)
     else:
-        with fs.open(cfg["data"]["original_train_path"]) as f:
-            df_train = pl.read_parquet(f)
-            df_train = df_train.rename(mapping={"nace2025": "code", "libelle": "label"})[["code", "label"]]
-            df_train = df_train.with_columns(
-                (pl.col("code").str.slice(0, 2) + "." + pl.col("code").str.slice(2)).alias("code")
-            )
-            df_train = sample_with_all_codes(df_train, "code", 0.1)
+        raise ValueError(f"{injection_method} is not a valid synthetic injection method.")
 
-        f = cfg["data"]["synth_split"]
-        synth_size = int(f * len(df_train) / (1-f))
+    if df_train is None:    # Invalid sampling
+        return
 
-        if synth_size > len(df_synth) * 1.1:
-            logger.warn(f"synth_split is too high to sample enough labels: {synth_size} synth labels wanted vs {len(df_synth)} synth labels.")
-            return
-
-        df_train = pl.concat([df_train, df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)])
-
-    df_train = sample_with_all_codes(df_train, "code", cfg["data"]["sample_frac"])
-    df_train = df_train.sample(fraction=1.0, shuffle=True, seed=42)
-    df_val = df_val.sample(fraction=cfg["data"]["sample_frac"])
-    df_test = df_test.sample(fraction=cfg["data"]["sample_frac"])
+    # Preprocessing
 
     if cfg["tokenizer"]["preprocessed"]:
         import nltk
@@ -138,9 +64,9 @@ def main(cfg: DictConfig):
 
         french_stopwords = stopwords.words('french')
 
-        df_train = preprocess(df_train, text_column="label", stopwords=french_stopwords)
-        df_val = preprocess(df_val, text_column="label", stopwords=french_stopwords)
-        df_test = preprocess(df_test, text_column="label", stopwords=french_stopwords)
+        df_train = data.preprocess(df_train, text_column="label", stopwords=french_stopwords)
+        df_val = data.preprocess(df_val, text_column="label", stopwords=french_stopwords)
+        df_test = data.preprocess(df_test, text_column="label", stopwords=french_stopwords)
 
     n_classes = df_train["code"].n_unique()
     logger.info(f"Number of classes: {n_classes}")
@@ -153,14 +79,15 @@ def main(cfg: DictConfig):
 
     # Codes
 
-    all_codes = set(df_synth["code"])
     train_codes = set(df_train["code"])
-    missing = all_codes - train_codes
+    val_codes = set(df_val["code"])
+    test_codes = set(df_test["code"])
+    missing = val_codes.union(test_codes) - train_codes
 
-    if missing:
+    if len(missing) > 0:
         logger.warn(f"{len(missing)} code(s) missing from training set")
     else:
-        logger.info(f"All {len(all_codes)} codes appear in the training set.")
+        logger.info(f"All {len(train_codes)} codes appear in the training set.")
 
     encoder = LabelEncoder()
     encoder.fit(y_train)
