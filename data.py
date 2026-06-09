@@ -70,8 +70,8 @@ def fixed_original_size_sampling(cfg):
         subdf_synth = df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)
         df_train = pl.concat([df_train, subdf_synth])
 
-    df_val = df_val.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
-    df_test = df_test.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
+    df_val = df_val.sample(n=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
+    df_test = df_test.sample(n=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
 
     return df_train, df_val, df_test
 
@@ -145,8 +145,8 @@ def fixed_final_size_sampling(cfg):
         df_train = pl.concat([df_real, df_synth])
         df_train = df_train.sample(fraction=1.0, shuffle=True, seed=42)
 
-    df_val = df_val.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
-    df_test = df_test.sample(fraction=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
+    df_val = df_val.sample(n=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
+    df_test = df_test.sample(n=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
 
     return df_train, df_val, df_test
 

@@ -7,17 +7,17 @@ data:
 injection:
   method: fixed_final_size      # or fixed_original_size
   synth_split: 0.2
-  val_test_sample: 0.01             # to reduce overall size for small dev frameworks
+  val_test_sample: 1000             # to reduce overall size for small dev frameworks
   final_size: 50000             # for fixed_final_size
   subtrain_size : 50000         # for fixed_original_size to reduce training size
 
 tokenizer:
-  output_dim: 80
+  output_dim: 32
   vocab_size: 10000
   preprocessed: true
 
 model:
-  embedding_dim: 200
+  embedding_dim: 128
 
 training_config:
   num_epochs: 15

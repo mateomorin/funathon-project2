@@ -1,5 +1,3 @@
-"""This script is directly runnable using uv run solutions/1-ttc.py"""
-
 import logging
 import random
 
@@ -126,7 +124,7 @@ def main(cfg: DictConfig):
         value_encoder=value_encoder,
     )
 
-    mlflow.set_experiment("augmented-codif-ape")
+    mlflow.set_experiment("ttc-injection")
 
     training_config = TrainingConfig(**cfg["training_config"])
 
@@ -137,7 +135,6 @@ def main(cfg: DictConfig):
         cfg_dict = OmegaConf.to_container(cfg, resolve=True)
         flat_cfg = flatten_dict(cfg_dict)
         mlflow.log_params(flat_cfg)
-
         ttc.train(
             X_train,
             y_train,
