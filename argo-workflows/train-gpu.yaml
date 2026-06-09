@@ -19,7 +19,9 @@ spec:
       - name: different_lr
         value: 1e-3,5e-4,1e-4
       - name: different_split
-        value: 0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1
+        value: 0,0.2,0.4,0.6,0.8,1
+      - name: different_embedding_dim
+        value: 64,128,256
       - name: different_preprocessing
         value: true,false
       - name: data_naive
@@ -70,6 +72,7 @@ spec:
                 training_config.lr={{inputs.parameters.different_lr}} \
                 tokenizer.preprocessed={{inputs.parameters.different_preprocessing}} \
                 injection.synth_split={{inputs.parameters.different_split}} \
+                model.embedding_dim={{inputs.parameters.different_embedding_dim}} \
                 data.synth_path={{inputs.parameters.data_naive}},{{inputs.parameters.data_retext}}
 
         volumeMounts:
