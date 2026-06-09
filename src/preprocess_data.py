@@ -30,8 +30,8 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(mess
 
 def get_fs() -> s3fs.S3FileSystem:
     return s3fs.S3FileSystem(
-        endpoint_url=os.environ.get("MLFLOW_S3_ENDPOINT_URL", "https://minio.lab.sspcloud.fr"),
-        client_kwargs={"region_name": os.environ.get("AWS_DEFAULT_REGION", "us-east-1")},
+        endpoint_url="https://minio.lab.sspcloud.fr",
+        client_kwargs={"region_name": "us-east-1"},
     )
 
 
