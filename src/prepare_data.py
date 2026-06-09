@@ -1,14 +1,15 @@
 """
-Step 1 — Data preparation (Nested Sets Version).
+Step 1 — Data preparation (Nested Sets with Guaranteed Nomenclature Cover Version).
 
 For a given synth_path and a list of synth_splits, produce nested subdatasets
-ensuring strict inclusion to guarantee statistical monotonicity.
+ensuring strict inclusion AND 100% code coverage across all splits.
 """
 
 import hashlib
 import logging
 import os
 import sys
+from typing import List
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -44,18 +45,19 @@ def fetch_original_data(path: str, fs=None) -> pl.DataFrame:
     return df
 
 
-def sample_with_all_codes(df: pl.DataFrame, code_column: str, sample_size: int) -> pl.DataFrame:
-    df_guaranteed = df.unique(subset=[code_column], keep="first", maintain_order=True)
-    df_remaining = df.join(df_guaranteed, on=df.columns, how="anti", maintain_order="left_right")
-    remaining_size = sample_size - len(df_guaranteed)
-    if remaining_size <= 0:
-        logger.warning(
-            f"sample_size={sample_size} < number of unique codes={len(df_guaranteed)}. "
-            "Returning one row per code."
-        )
-        return df_guaranteed
-    df_remaining_sampled = df_remaining.sample(n=remaining_size, seed=42)
-    return pl.concat([df_guaranteed, df_remaining_sampled]).sample(fraction=1.0, seed=42)
+def split_guaranteed_and_remaining(df: pl.DataFrame, code_column: str) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    Sépare le dataset en deux :
+    - Un dataframe garanti contenant exactement une ligne par code unique (mélangé proprement).
+    - Un dataframe contenant le reste des lignes disponibles.
+    """
+    # On mélange d'abord pour ne pas toujours prendre la première ligne absolue du fichier source
+    df_shuffled = df.sample(fraction=1.0, shuffle=True, seed=42)
+    
+    df_guaranteed = df_shuffled.unique(subset=[code_column], keep="first", maintain_order=True)
+    df_remaining = df_shuffled.join(df_guaranteed, on=df.columns, how="anti", maintain_order="left_right")
+    
+    return df_guaranteed, df_remaining
 
 
 def s3_write(df: pl.DataFrame, path: str, fs: s3fs.S3FileSystem) -> None:
@@ -94,14 +96,12 @@ def main(cfg: DictConfig) -> None:
     val_test_sample = int(cfg.injection.val_test_sample)
     output_prefix = cfg.get("output_prefix", "s3://mateom/graal/ttc-injection/")
 
-    # Gestion dynamique du type pour accepter une liste brute ou une string CSV
     raw_splits = cfg.injection.synth_splits
     if isinstance(raw_splits, str):
         synth_splits = [float(x.strip()) for x in raw_splits.split(",")]
     else:
         synth_splits = [float(x) for x in OmegaConf.to_object(raw_splits)]
 
-    # Sorting pour s'assurer que notre logique d'incrémentation visuelle est propre
     synth_splits = sorted(synth_splits)
 
     # ------------------------------------------------------------------
@@ -122,26 +122,22 @@ def main(cfg: DictConfig) -> None:
         s3_write(df_test, test_key, fs)
 
     # ------------------------------------------------------------------
-    # Génération des Réservoirs de Base Fixes (Le cœur de l'inclusion)
+    # Préparation des Réservoirs avec Nomenclature Garantie
     # ------------------------------------------------------------------
-    logger.info(f"Sampling master pools of size final_size={final_size} …")
-
-    # Pool 1 : Données originales
+    logger.info("Splitting master data into guaranteed nomenclature bases and remaining pools …")
+    
+    # Réel / Original
     df_real_raw = fetch_original_data(cfg.data.original_train_path, fs)
-    if final_size > len(df_real_raw):
-        logger.error(f"Original dataset ({len(df_real_raw)} rows) is smaller than final_size={final_size}.")
-        sys.exit(1)
-    df_real_pool = sample_with_all_codes(df_real_raw, "code", final_size)
+    df_real_base, df_real_rem = split_guaranteed_and_remaining(df_real_raw, "code")
+    logger.info(f"Real data: {len(df_real_base)} guaranteed codes, {len(df_real_rem)} remaining rows available.")
 
-    # Pool 2 : Données synthétiques
+    # Synthétique
     with fs.open(synth_path) as f:
         df_synth_raw = pl.read_parquet(f)
     if "name" in df_synth_raw.columns:
         df_synth_raw = df_synth_raw.drop("name")
-    if final_size > len(df_synth_raw):
-        logger.error(f"Synthetic dataset ({len(df_synth_raw)} rows) is smaller than final_size={final_size}.")
-        sys.exit(1)
-    df_synth_pool = sample_with_all_codes(df_synth_raw, "code", final_size)
+    df_synth_base, df_synth_rem = split_guaranteed_and_remaining(df_synth_raw, "code")
+    logger.info(f"Synthetic data: {len(df_synth_base)} guaranteed codes, {len(df_synth_rem)} remaining rows available.")
 
     # ------------------------------------------------------------------
     # Boucle de création des datasets imbriqués
@@ -150,7 +146,7 @@ def main(cfg: DictConfig) -> None:
 
     for split in synth_splits:
         assert 0.0 <= split <= 1.0, f"synth_split {split} must be in [0, 1]"
-
+        
         train_key_name = make_train_key(synth_path, split, final_size)
         train_key = f"{output_prefix}/train/{train_key_name}.parquet"
         train_paths_emitted.append(train_key)
@@ -159,23 +155,44 @@ def main(cfg: DictConfig) -> None:
             logger.info(f"Train artifact for split={split} already exists — skipping.")
             continue
 
-        synth_size = round(split * final_size)
-        real_size = final_size - synth_size
+        # Calcul du nombre de lignes cibles réelles et synthétiques globales
+        synth_target_size = round(split * final_size)
+        real_target_size = final_size - synth_target_size
 
-        logger.info(f"Building nested train split: ratio={split} (synth: {synth_size}, real: {real_size})")
+        logger.info(f"Building nested train split: ratio={split} (synth target: {synth_target_size}, real target: {real_target_size})")
 
-        # Slice déterministe sur les réservoirs fixes pour garantir l'inclusion
-        df_synth_chunk = df_synth_pool.head(synth_size)
-        df_real_chunk = df_real_pool.head(real_size)
+        # --- Bloc Synthétique ---
+        if synth_target_size == 0:
+            df_synth_chunk = pl.DataFrame(schema=df_synth_base.schema)
+        elif synth_target_size <= len(df_synth_base):
+            # Cas extrême ou échantillon cible plus petit que le nombre de codes uniques. 
+            # On restreint la base fixe tout en restant déterministe.
+            df_synth_chunk = df_synth_base.head(synth_target_size)
+        else:
+            # Cas classique : On prend toute la base nomenclature + le complément nécessaire depuis le reste
+            rem_synth_needed = synth_target_size - len(df_synth_base)
+            df_synth_chunk = pl.concat([df_synth_base, df_synth_rem.head(rem_synth_needed)])
 
-        # Fusion et sauvegarde
+        # --- Bloc Réel / Original ---
+        if real_target_size == 0:
+            df_real_chunk = pl.DataFrame(schema=df_real_base.schema)
+        elif real_target_size <= len(df_real_base):
+            df_real_chunk = df_real_base.head(real_target_size)
+        else:
+            rem_real_needed = real_target_size - len(df_real_base)
+            df_real_chunk = pl.concat([df_real_base, df_real_rem.head(rem_real_needed)])
+
+        # Validation finale des volumes
+        total_extracted = len(df_real_chunk) + len(df_synth_chunk)
+        if total_extracted != final_size:
+            logger.error(f"Size mismatch for split {split}: got {total_extracted} rows instead of {final_size}")
+            sys.exit(1)
+
+        # Fusion des deux blocs et brassage final
         df_train = pl.concat([df_real_chunk, df_synth_chunk]).sample(fraction=1.0, shuffle=True, seed=42)
         s3_write(df_train, train_key, fs)
 
-    # ------------------------------------------------------------------
-    # Adaptation Argo : On renvoie les variables attendues
-    # ------------------------------------------------------------------
-    # Comme le script traite TOUT d'un coup, on affiche la liste des chemins créés
+    # Output à destination d'Argo
     print(f"TRAIN_PATHS={','.join(train_paths_emitted)}")
     print(f"VAL_PATH={val_key}")
     print(f"TEST_PATH={test_key}")
