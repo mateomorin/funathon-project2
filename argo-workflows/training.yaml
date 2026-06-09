@@ -1,0 +1,179 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Workflow
+metadata:
+  generateName: model-training-pipeline-
+spec:
+  serviceAccountName: workflow
+  entrypoint: pipeline
+  nodeStatusVersion: v1
+
+  arguments:
+    parameters:
+      # Configurations fixes correspondant à ce qui a été généré sur S3
+      - name: final_size
+        value: "50000"
+      - name: output_prefix
+        value: s3://mateom/graal/ttc-injection/
+      - name: synth_splits
+        value: "0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1"
+      - name: preprocessed_values
+        value: "true,false"
+      - name: synth_paths
+        value: "s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet"
+
+      # Hyperparamètres d'entraînement globaux
+      - name: num_epochs
+        value: "15"
+      - name: batch_size
+        value: "128"
+      - name: patience_early_stopping
+        value: "2"
+      - name: vocab_size
+        value: "10000"
+      - name: tokenizer_output_dim
+        value: "32"
+
+  templates:
+    - name: pipeline
+      dag:
+        tasks:
+          - name: sweep-datasets
+            template: sweep-datasets
+            arguments:
+              parameters:
+                - name: synth_path
+                  value: "{{item}}"
+            withParam: "{{= toJson(split(workflow.parameters.synth_paths, ',')) }}"
+
+    - name: sweep-datasets
+      inputs:
+        parameters:
+          - name: synth_path
+      dag:
+        tasks:
+          - name: sweep-splits
+            template: sweep-splits
+            arguments:
+              parameters:
+                - name: synth_path
+                  value: "{{inputs.parameters.synth_path}}"
+                - name: synth_split
+                  value: "{{item}}"
+            withParam: "{{= toJson(split(workflow.parameters.synth_splits, ',')) }}"
+
+    - name: sweep-splits
+      inputs:
+        parameters:
+          - name: synth_path
+          - name: synth_split
+      dag:
+        tasks:
+          - name: sweep-preprocessing
+            template: sweep-preprocessing
+            arguments:
+              parameters:
+                - name: synth_path
+                  value: "{{inputs.parameters.synth_path}}"
+                - name: synth_split
+                  value: "{{inputs.parameters.synth_split}}"
+                - name: preprocessed
+                  value: "{{item}}"
+            withParam: "{{= toJson(split(workflow.parameters.preprocessed_values, ',')) }}"
+
+    - name: sweep-preprocessing
+      inputs:
+        parameters:
+          - name: synth_path
+          - name: synth_split
+          - name: preprocessed
+      dag:
+        tasks:
+          - name: train-model
+            template: train-model
+            arguments:
+              parameters:
+                - name: synth_path
+                  value: "{{inputs.parameters.synth_path}}"
+                - name: synth_split
+                  value: "{{inputs.parameters.synth_split}}"
+                - name: preprocessed
+                  value: "{{inputs.parameters.preprocessed}}"
+                - name: embedding_dim
+                  value: "{{item.embedding_dim}}"
+                - name: lr
+                  value: "{{item.lr}}"
+            withItems:
+              - { embedding_dim: "64",  lr: "1e-3" }
+              - { embedding_dim: "64",  lr: "5e-4" }
+              - { embedding_dim: "64",  lr: "1e-4" }
+              - { embedding_dim: "128", lr: "1e-3" }
+              - { embedding_dim: "128", lr: "5e-4" }
+              - { embedding_dim: "128", lr: "1e-4" }
+              - { embedding_dim: "256", lr: "1e-3" }
+              - { embedding_dim: "256", lr: "5e-4" }
+              - { embedding_dim: "256", lr: "1e-4" }
+
+    - name: train-model
+      inputs:
+        parameters:
+          - name: synth_path
+          - name: synth_split
+          - name: preprocessed
+          - name: embedding_dim
+          - name: lr
+      container:
+        image: inseefrlab/onyxia-vscode-pytorch:py3.13.5-cpu
+        imagePullPolicy: Always
+        resources:
+          requests: {cpu: "3000m", memory: "8Gi"}
+          limits: {cpu: "4000m", memory: "16Gi"}
+        command: ["/bin/bash", "-c"]
+        args:
+          - |
+            set -e
+            git clone -b main https://github.com/mateomorin/funathon-project2.git
+            cd funathon-project2/
+            uv sync --group train
+
+            # Extraction du nom du fichier pour reconstruire les patterns S3 d'Hydra
+            SYNTH_NAME=$(basename "{{inputs.parameters.synth_path}}" .parquet)
+            TAG=$( [ "{{inputs.parameters.preprocessed}}" = "true" ] && echo "preprocessed" || echo "raw" )
+            
+            # Reconstruction des patterns exacts attendus par le script
+            TRAIN_S3="{{workflow.parameters.output_prefix}}/${TAG}/train_split_{{inputs.parameters.synth_split}}_${SYNTH_NAME}.parquet"
+            VAL_S3="{{workflow.parameters.output_prefix}}/${TAG}/val_n30000.parquet"
+            TEST_S3="{{workflow.parameters.output_prefix}}/${TAG}/test_n30000.parquet"
+
+            uv run python src/train_model.py \
+              train_path="${TRAIN_S3}" \
+              val_path="${VAL_S3}" \
+              test_path="${TEST_S3}" \
+              model.embedding_dim="{{inputs.parameters.embedding_dim}}" \
+              training_config.lr="{{inputs.parameters.lr}}" \
+              training_config.num_epochs="{{workflow.parameters.num_epochs}}" \
+              training_config.batch_size="{{workflow.parameters.batch_size}}" \
+              training_config.patience_early_stopping="{{workflow.parameters.patience_early_stopping}}" \
+              tokenizer.vocab_size="{{workflow.parameters.vocab_size}}" \
+              tokenizer.output_dim="{{workflow.parameters.tokenizer_output_dim}}" \
+              training_config.accelerator=cpu \
+              data.synth_path="{{inputs.parameters.synth_path}}" \
+              injection.synth_split="{{inputs.parameters.synth_split}}" \
+              injection.final_size="{{workflow.parameters.final_size}}" \
+              tokenizer.preprocessed="{{inputs.parameters.preprocessed}}"
+        env:
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom: {secretKeyRef: {name: s3-read-only, key: AWS_ACCESS_KEY_ID}}
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom: {secretKeyRef: {name: s3-read-only, key: AWS_SECRET_ACCESS_KEY}}
+          - name: AWS_DEFAULT_REGION
+            value: us-east-1
+          - name: AWS_S3_ENDPOINT
+            value: minio.lab.sspcloud.fr
+          - name: MLFLOW_S3_ENDPOINT_URL
+            value: https://minio.lab.sspcloud.fr
+          - name: MLFLOW_TRACKING_URI
+            valueFrom: {secretKeyRef: {name: my-mlflow-creds, key: MLFLOW_TRACKING_URI}}
+          - name: MLFLOW_TRACKING_PASSWORD
+            valueFrom: {secretKeyRef: {name: my-mlflow-creds, key: MLFLOW_TRACKING_PASSWORD}}
+          - name: MLFLOW_TRACKING_USERNAME
+            valueFrom: {secretKeyRef: {name: my-mlflow-creds, key: MLFLOW_TRACKING_USERNAME}}

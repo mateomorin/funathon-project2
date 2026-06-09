@@ -33,7 +33,7 @@ spec:
       - name: patience_early_stopping
         value : 2
       - name: synth_path
-        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
+        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquets3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-06-05_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
       - name: original_train_path
         value: s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet
       - name: original_val_path
