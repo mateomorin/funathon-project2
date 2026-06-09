@@ -8,6 +8,7 @@ import numpy as np
 import mlflow
 from dotenv import load_dotenv
 from sklearn.preprocessing import LabelEncoder
+from sklearn.metrics import f1_score
 from torchTextClassifiers import ModelConfig, TrainingConfig, torchTextClassifiers
 from torchTextClassifiers.tokenizers import WordPieceTokenizer
 from torchTextClassifiers.value_encoder import ValueEncoder
@@ -148,30 +149,85 @@ def main(cfg: DictConfig):
 
         ttc.pytorch_model.eval()
 
+        # 1. Affichage de quelques exemples (inchangé mais isolé)
         random_indices = random.sample(range(len(X_test)), 3)
         example_texts = X_test[random_indices]
         example_true_codes = y_test[random_indices]
         logger.info(example_texts)
-        top_k = 5
-        results = ttc.predict(example_texts, top_k=top_k, explain_with_captum=True)
+        top_k_examples = 5
+
+        results_examples = ttc.predict(example_texts, top_k=top_k_examples, explain_with_captum=True)
         for i, text in enumerate(example_texts):
-            predicted_codes = [results["prediction"][i][k] for k in range(top_k)]
-            confidence = [results["confidence"][i][k].item() for k in range(top_k)]
+            predicted_codes = [results_examples["prediction"][i][k] for k in range(top_k_examples)]
+            confidence = [results_examples["confidence"][i][k].item() for k in range(top_k_examples)]
             logger.info(f"\nText: {text}")
             logger.info(f"  True code: {example_true_codes[i]}")
             for code, conf in zip(predicted_codes, confidence):
                 logger.info(f"  {code}  (confidence: {conf:.3f})")
 
-        results_test = ttc.predict(X_test, top_k=1)
-        preds = results_test["prediction"].squeeze(1)
-        accuracy = (preds == y_test).mean()
-        logger.info(
-            f"Test accuracy: {accuracy:.4f} ({int(accuracy * len(y_test))}/{len(y_test)} correct)"
-        )
+        # 2. Prédiction globale sur le set de test pour le calcul des métriques (Top-5)
+        logger.info("Running predictions on the full test set...")
+        results_test = ttc.predict(X_test, top_k=5)  # On demande le top 5 d'un coup
 
-        logger.info("Logging metrics...")
+        # Extraction des prédictions et confiances sous forme de arrays numpy pour manipuler facilement
+        preds_top5 = np.array(results_test["prediction"])   # Forme attendue : (nb_exemples, 5)
+        conf_top5 = np.array([[c.item() if hasattr(c, 'item') else c for c in row] for row in results_test["confidence"]]) # Forme : (nb_exemples, 5)
+        y_test_arr = np.array(y_test)
 
-        mlflow.log_metric("test_accuracy", accuracy)
+        # --- CALCUL DES TOP-K ACCURACY ---
+        # Top-1
+        preds_top1 = preds_top5[:, 0]
+        accuracy_top1 = (preds_top1 == y_test_arr).mean()
+
+        # Top-3
+        correct_top3 = np.any(preds_top5[:, :3] == y_test_arr[:, None], axis=1)
+        accuracy_top3 = correct_top3.mean()
+
+        # Top-5
+        correct_top5 = np.any(preds_top5 == y_test_arr[:, None], axis=1)
+        accuracy_top5 = correct_top5.mean()
+
+        # --- ANALYSE DE LA CONFIANCE (Seuil > 70%) ---
+        threshold = 0.70
+        conf_top1 = conf_top5[:, 0]  # Confiance accordée au premier choix
+
+        # Taux de couverture : % de cas où le modèle dépasse le seuil
+        confident_mask = conf_top1 > threshold
+        coverage_rate = confident_mask.mean()
+
+        # Accuracy filtrée : Précision du modèle uniquement lorsqu'il est confiant
+        if confident_mask.sum() > 0:
+            accuracy_confident = (preds_top1[confident_mask] == y_test_arr[confident_mask]).mean()
+        else:
+            accuracy_confident = 0.0
+
+        # --- F1-Scores ---
+        f1_macro = f1_score(y_test_arr, preds_top1, average='macro', zero_division=0)
+        f1_weighted = f1_score(y_test_arr, preds_top1, average='weighted', zero_division=0)
+
+        # --- LOGGING DES RÉSULTATS ---
+        logger.info("\n=== GLOBAL PERFORMANCE METRICS ===")
+        logger.info(f"Test Accuracy Top-1 : {accuracy_top1:.4f}")
+        logger.info(f"Test Accuracy Top-3 : {accuracy_top3:.4f}")
+        logger.info(f"Test Accuracy Top-5 : {accuracy_top5:.4f}")
+
+        logger.info("\n=== CONFIDENCE ANALYSIS (Seuil > 70%) ===")
+        logger.info(f"Coverage Rate (Conf > 70%)   : {coverage_rate:.4f} ({confident_mask.sum()}/{len(y_test_arr)})")
+        logger.info(f"Accuracy when Conf > 70%     : {accuracy_confident:.4f}")
+
+        logger.info("\n=== IMBALANCE METRICS (747 Classes) ===")
+        logger.info(f"F1-Score (Macro)    : {f1_macro:.4f}  <- (Indicateur de performance sur les classes rares)")
+        logger.info(f"F1-Score (Weighted) : {f1_weighted:.4f}")
+
+        # --- MLFLOW LOGGING ---
+        logger.info("Logging metrics to MLflow...")
+        mlflow.log_metric("test_accuracy_top1", accuracy_top1)
+        mlflow.log_metric("test_accuracy_top3", accuracy_top3)
+        mlflow.log_metric("test_accuracy_top5", accuracy_top5)
+        mlflow.log_metric("confidence_coverage_rate", coverage_rate)
+        mlflow.log_metric("confidence_accuracy", accuracy_confident)
+        mlflow.log_metric("f1_score_macro", f1_macro)
+        mlflow.log_metric("f1_score_weighted", f1_weighted)
 
     return df_train, df_val, df_test, ttc
 

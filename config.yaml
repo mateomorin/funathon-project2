@@ -1,15 +1,9 @@
-data:
-  synth_path: "s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet"
-  original_train_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet"
-  original_val_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_val.parquet"
-  original_test_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet"
-
 injection:
   method: fixed_final_size      # or fixed_original_size
   synth_split: 0.2
   val_test_sample: 1000             # to reduce overall size for small dev frameworks
-  final_size: 50000             # for fixed_final_size
-  subtrain_size : 50000         # for fixed_original_size to reduce training size
+  final_size: 10000                 # for fixed_final_size
+  train_original_sample : 50000         # for fixed_original_size to reduce training size taken from original dataset
 
 tokenizer:
   output_dim: 32
@@ -20,8 +14,14 @@ model:
   embedding_dim: 128
 
 training_config:
-  num_epochs: 15
+  num_epochs: 1
   batch_size: 128
   lr: 5e-4
   patience_early_stopping: 2
   accelerator: cpu
+
+data:
+  synth_path: "s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet"
+  original_train_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet"
+  original_val_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_val.parquet"
+  original_test_path: "s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet"

@@ -53,22 +53,24 @@ def fixed_original_size_sampling(cfg):
     if synth_split == 1:
         df_train = df_synth
     else:
-        with fs.open(cfg["data"]["original_train_path"]) as f:
+        with fs.open(cfg["data"]["original_train_path"]) as f:      # Sampling only a proportion
             df_train = fetch_original_data(f)
             df_train = sample_with_all_codes(
                 df=df_train,
                 code_column="code",
-                sample_size=cfg["injection"]["subtrain_size"]
+                sample_size=cfg["injection"]["train_original_sample"]
             )
 
-        synth_size = round(synth_split * len(df_train) / (1 - synth_split))
+        if synth_split > 0:
+            synth_size = round(synth_split * len(df_train) / (1 - synth_split))
 
-        if synth_size > len(df_synth) * 1.1:
-            logger.warn(f"synth_split is too high to sample enough labels: {synth_size} synth labels wanted vs {len(df_synth)} synth labels.")
-            return None, None, None
+            if synth_size > len(df_synth) * 1.1:
+                logger.warn(f"synth_split is too high to sample enough labels: {synth_size} synth labels wanted vs {len(df_synth)} synth labels.")
+                return None, None, None
 
-        subdf_synth = df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)
-        df_train = pl.concat([df_train, subdf_synth])
+            subdf_synth = df_synth.sample(min(len(df_synth), synth_size), seed=42, shuffle=True)
+            df_train = pl.concat([df_train, subdf_synth])
+            df_train = df_train.sample(fraction=1.0, seed=42, shuffle=True)
 
     df_val = df_val.sample(n=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)
     df_test = df_test.sample(n=cfg["injection"]["val_test_sample"], shuffle=True, seed=42)

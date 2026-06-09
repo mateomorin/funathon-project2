@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: ttc-injection
+  generateName: ttc-injection-gpu-
 spec:
   serviceAccountName: workflow
   volumes:
@@ -12,33 +12,52 @@ spec:
   entrypoint: main
   arguments:
     parameters:
-      - name: different_val_test_sample
-        value: 30000
-      - name: different_method
+      - name: method
         value: fixed_final_size
-      - name: different_lr
-        value: 1e-3,5e-4,1e-4
-      - name: different_split
-        value: 0,0.2,0.4,0.6,0.8,1
-      - name: different_embedding_dim
-        value: 64,128,256
-      - name: different_preprocessing
+      - name: synth_split
+        value: 0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1
+      - name: val_test_sample
+        value: 30000
+      - name: final_size
+        value: 50000
+      - name: train_original_sample
+        value: 50000
+      - name: preprocessed
         value: true,false
-      - name: data_naive
-        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet
-      - name: data_retext
-        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
+      - name: embedding_dim
+        value: 64,128,256
+      - name: num_epochs
+        value: 15
+      - name: lr
+        value: 1e-3,5e-4,1e-4
+      - name: patience_early_stopping
+        value : 2
+      - name: synth_path
+        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
+      - name: original_train_path
+        value: s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet
+      - name: original_val_path
+        value: s3://projet-ape/data/08112022_27102024/naf2025/split/df_val.parquet
+      - name: original_test_path
+        value: s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet
   templates:
     - name: main
       inputs:
         parameters:
-        - name: different_val_test_sample
-        - name: different_method
-        - name: different_lr
-        - name: different_split
-        - name: different_preprocessing
-        - name: data_naive
-        - name: data_retext
+        - name: method
+        - name: synth_split
+        - name: val_test_sample
+        - name: final_size
+        - name: train_original_sample
+        - name: preprocessed
+        - name: embedding_dim
+        - name: num_epochs
+        - name: lr
+        - name: patience_early_stopping
+        - name: synth_path
+        - name: original_train_path
+        - name: original_val_path
+        - name: original_test_path
       container:
         image: inseefrlab/onyxia-vscode-pytorch:py3.13.5-gpu
         imagePullPolicy: Always
@@ -67,13 +86,20 @@ spec:
             # Run MLflow experiment
             uv run train.py -m \
                 training_config.accelerator=cuda \
-                injection.val_test_sample={{inputs.parameters.different_val_test_sample}} \
-                injection.method={{inputs.parameters.different_method}} \
-                training_config.lr={{inputs.parameters.different_lr}} \
-                tokenizer.preprocessed={{inputs.parameters.different_preprocessing}} \
-                injection.synth_split={{inputs.parameters.different_split}} \
-                model.embedding_dim={{inputs.parameters.different_embedding_dim}} \
-                data.synth_path={{inputs.parameters.data_naive}},{{inputs.parameters.data_retext}}
+                injection.method={{inputs.parameters.method}} \
+                injection.synth_split={{inputs.parameters.synth_split}} \
+                injection.val_test_sample={{inputs.parameters.val_test_sample}} \
+                injection.final_size={{inputs.parameters.final_size}} \
+                injection.train_original_sample={{inputs.parameters.train_original_sample}} \
+                tokenizer.preprocessed={{inputs.parameters.preprocessed}} \
+                model.embedding_dim={{inputs.parameters.embedding_dim}} \
+                training_config.num_epochs={{inputs.parameters.num_epochs}} \
+                training_config.lr={{inputs.parameters.lr}} \
+                training_config.patience_early_stopping={{inputs.parameters.patience_early_stopping}} \
+                data.synth_path={{inputs.parameters.synth_path}} \
+                data.original_train_path={{inputs.parameters.original_train_path}} \
+                data.original_val_path={{inputs.parameters.original_val_path}} \
+                data.original_test_path={{inputs.parameters.original_test_path}}
 
         volumeMounts:
           - mountPath: /dev/shm
