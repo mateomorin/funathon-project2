@@ -4,34 +4,15 @@ Step 3 — Model training & evaluation.
 Reads preprocessed (train / val / test) parquet files produced by
 preprocess_data.py, trains a torchTextClassifiers model, and logs all
 metrics + hyper-parameters to MLflow.
-
-All heavy data work (sampling, preprocessing) has already been done
-upstream, so this step is purely CPU/GPU bound.
-
-Usage:
-    python train_model.py \
-        --train_path  s3://.../preprocessed/true/xxx.parquet \
-        --val_path    s3://.../preprocessed/true/val_n30000.parquet \
-        --test_path   s3://.../preprocessed/true/test_n30000.parquet \
-        --embedding_dim 128 \
-        --lr 5e-4 \
-        --num_epochs 15 \
-        --batch_size 128 \
-        --patience_early_stopping 2 \
-        --vocab_size 10000 \
-        --tokenizer_output_dim 32 \
-        --accelerator cpu \
-        --synth_path  s3://.../xxx.parquet \
-        --synth_split 0.2 \
-        --final_size  50000 \
-        --preprocessed true
 """
 
-import argparse
 import logging
 import os
 import random
+import sys
 
+import hydra
+from omegaconf import DictConfig, OmegaConf
 import mlflow
 import numpy as np
 import polars as pl
@@ -66,31 +47,15 @@ def s3_read(path: str, fs: s3fs.S3FileSystem) -> pl.DataFrame:
         return pl.read_parquet(f)
 
 
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
-
-def parse_args():
-    p = argparse.ArgumentParser()
-    # Data paths
-    p.add_argument("--train_path",   required=True)
-    p.add_argument("--val_path",     required=True)
-    p.add_argument("--test_path",    required=True)
-    # Model / training hyper-params
-    p.add_argument("--embedding_dim",           type=int,   default=128)
-    p.add_argument("--lr",                      type=float, default=5e-4)
-    p.add_argument("--num_epochs",              type=int,   default=15)
-    p.add_argument("--batch_size",              type=int,   default=128)
-    p.add_argument("--patience_early_stopping", type=int,   default=2)
-    p.add_argument("--vocab_size",              type=int,   default=10000)
-    p.add_argument("--tokenizer_output_dim",    type=int,   default=32)
-    p.add_argument("--accelerator",             default="cpu")
-    # Experiment tracking tags (passed through from upstream for MLflow logging)
-    p.add_argument("--synth_path",   default="")
-    p.add_argument("--synth_split",  type=float, default=0.0)
-    p.add_argument("--final_size",   type=int,   default=50000)
-    p.add_argument("--preprocessed", default="false")
-    return p.parse_args()
+def flatten_dict(d: dict, parent_key: str = '', sep: str = '.') -> dict:
+    items = []
+    for k, v in d.items():
+        new_key = f"{parent_key}{sep}{k}" if parent_key else k
+        if isinstance(v, dict):
+            items.extend(flatten_dict(v, new_key, sep=sep).items())
+        else:
+            items.append((new_key, v))
+    return dict(items)
 
 
 def set_seeds():
@@ -104,19 +69,33 @@ def set_seeds():
         torch.backends.cudnn.benchmark = False
 
 
-def main():
-    args = parse_args()
-    set_seeds()
+# ---------------------------------------------------------------------------
+# Main Entrypoint with Hydra
+# ---------------------------------------------------------------------------
 
+@hydra.main(version_base=None, config_path="../", config_name="config")
+def main(cfg: DictConfig) -> None:
+    set_seeds()
     fs = get_fs()
+
+    # ------------------------------------------------------------------
+    # Extraction des chemins passés dynamiquement (via Argo)
+    # ------------------------------------------------------------------
+    train_path = cfg.get("train_path")
+    val_path = cfg.get("val_path")
+    test_path = cfg.get("test_path")
+
+    if not all([train_path, val_path, test_path]):
+        logger.error("Missing required paths. Ensure train_path, val_path, and test_path are provided.")
+        sys.exit(1)
 
     # ------------------------------------------------------------------
     # Load data
     # ------------------------------------------------------------------
     logger.info("Loading data …")
-    df_train = s3_read(args.train_path, fs)
-    df_val   = s3_read(args.val_path,   fs)
-    df_test  = s3_read(args.test_path,  fs)
+    df_train = s3_read(train_path, fs)
+    df_val   = s3_read(val_path,   fs)
+    df_test  = s3_read(test_path,  fs)
 
     logger.info(f"Train: {len(df_train)} | Val: {len(df_val)} | Test: {len(df_test)}")
 
@@ -146,12 +125,12 @@ def main():
     value_encoder = ValueEncoder(label_encoder=encoder)
 
     # ------------------------------------------------------------------
-    # Tokenization
+    # Tokenization (instancié depuis le bloc tokenizer de config.yaml)
     # ------------------------------------------------------------------
     logger.info("Training WordPiece tokenizer …")
     tokenizer = WordPieceTokenizer(
-        vocab_size=args.vocab_size,
-        output_dim=args.tokenizer_output_dim,
+        vocab_size=int(cfg.tokenizer.vocab_size),
+        output_dim=int(cfg.tokenizer.output_dim),
     )
     tokenizer.train(X_train)
 
@@ -159,10 +138,10 @@ def main():
     logger.info(f"Vocabulary size    : {tokenizer.vocab_size}")
 
     # ------------------------------------------------------------------
-    # Model
+    # Model & Training Configurations
     # ------------------------------------------------------------------
     model_config = ModelConfig(
-        embedding_dim=args.embedding_dim,
+        embedding_dim=int(cfg.model.embedding_dim),
         num_classes=n_classes,
     )
     ttc = torchTextClassifiers(
@@ -172,36 +151,25 @@ def main():
     )
 
     training_config = TrainingConfig(
-        num_epochs=args.num_epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        patience_early_stopping=args.patience_early_stopping,
-        accelerator=args.accelerator,
+        num_epochs=int(cfg.training_config.num_epochs),
+        batch_size=int(cfg.training_config.batch_size),
+        lr=float(cfg.training_config.lr),
+        patience_early_stopping=int(cfg.training_config.patience_early_stopping),
+        accelerator=cfg.training_config.accelerator,
     )
 
     # ------------------------------------------------------------------
-    # MLflow
+    # MLflow Setup & Parameters Logging
     # ------------------------------------------------------------------
     mlflow.set_experiment("ttc-injection")
     mlflow.pytorch.autolog()
 
-    params = {
-        "injection.synth_path":              args.synth_path,
-        "injection.synth_split":             args.synth_split,
-        "injection.final_size":              args.final_size,
-        "tokenizer.preprocessed":            args.preprocessed,
-        "tokenizer.vocab_size":              args.vocab_size,
-        "tokenizer.output_dim":              args.tokenizer_output_dim,
-        "model.embedding_dim":               args.embedding_dim,
-        "training_config.num_epochs":        args.num_epochs,
-        "training_config.batch_size":        args.batch_size,
-        "training_config.lr":                args.lr,
-        "training_config.patience":          args.patience_early_stopping,
-        "training_config.accelerator":       args.accelerator,
-    }
+    # Flat dictionary reconstruit depuis le DictConfig d'Hydra pour MLflow
+    cfg_dict = OmegaConf.to_container(cfg, resolve=True)
+    flat_cfg = flatten_dict(cfg_dict)
 
     with mlflow.start_run():
-        mlflow.log_params(params)
+        mlflow.log_params(flat_cfg)
 
         # ------------------------------------------------------------------
         # Train
@@ -250,10 +218,10 @@ def main():
         accuracy_top3 = np.any(preds_top5[:, :3] == y_test_arr[:, None], axis=1).mean()
         accuracy_top5 = np.any(preds_top5         == y_test_arr[:, None], axis=1).mean()
 
-        threshold      = 0.70
-        conf_top1_arr  = conf_top5[:, 0]
-        confident_mask = conf_top1_arr > threshold
-        coverage_rate  = confident_mask.mean()
+        threshold          = 0.70
+        conf_top1_arr      = conf_top5[:, 0]
+        confident_mask     = conf_top1_arr > threshold
+        coverage_rate      = confident_mask.mean()
         accuracy_confident = (
             (preds_top1[confident_mask] == y_test_arr[confident_mask]).mean()
             if confident_mask.sum() > 0 else 0.0

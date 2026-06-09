@@ -4,6 +4,8 @@ metadata:
   generateName: ttc-injection-v2-
 spec:
   serviceAccountName: workflow
+  entrypoint: pipeline
+  nodeStatusVersion: v1
 
   # -----------------------------------------------------------------------
   # Shared memory volume for GPU workers (only used in train step)
@@ -13,8 +15,6 @@ spec:
       emptyDir:
         medium: Memory
         sizeLimit: 32Gi
-
-  entrypoint: pipeline
 
   # -----------------------------------------------------------------------
   # Global parameters — edit here to change the sweep
@@ -48,7 +48,7 @@ spec:
 
       # --- S3 staging area ---
       - name: output_prefix
-        value: s3://projet-ape/ttc-injection/v2
+        value: s3://mateom/graal/ttc-injection/
 
       # --- Preprocessing ---
       - name: preprocessed_values
@@ -81,9 +81,6 @@ spec:
     - name: pipeline
       dag:
         tasks:
-          # One task per (synth_path × synth_split) combination.
-          # withItems is evaluated at submission time; Argo expands the
-          # cartesian product via nested loops below.
           - name: prepare-and-run
             template: per-synth-path
             arguments:
@@ -140,14 +137,13 @@ spec:
         parameters:
           - name: train_path
             valueFrom:
-              path: /tmp/outputs.txt
-              # parsed by the sidecar; see below
+              path: /tmp/train_path.txt
           - name: val_path
             valueFrom:
-              path: /tmp/outputs.txt
+              path: /tmp/val_path.txt
           - name: test_path
             valueFrom:
-              path: /tmp/outputs.txt
+              path: /tmp/test_path.txt
       container:
         image: inseefrlab/onyxia-vscode-pytorch:py3.13.5-gpu
         imagePullPolicy: Always
@@ -166,16 +162,15 @@ spec:
             cd funathon-project2/
             uv sync
             uv run python src/prepare_data.py \
-              --synth_path       "{{inputs.parameters.synth_path}}" \
-              --synth_split      "{{inputs.parameters.synth_split}}" \
-              --final_size       "{{workflow.parameters.final_size}}" \
-              --val_test_sample  "{{workflow.parameters.val_test_sample}}" \
-              --output_prefix    "{{workflow.parameters.output_prefix}}" \
-              --original_train_path "{{workflow.parameters.original_train_path}}" \
-              --original_val_path   "{{workflow.parameters.original_val_path}}" \
-              --original_test_path  "{{workflow.parameters.original_test_path}}" \
+              data.synth_path="{{inputs.parameters.synth_path}}" \
+              injection.synth_split="{{inputs.parameters.synth_split}}" \
+              injection.final_size="{{workflow.parameters.final_size}}" \
+              injection.val_test_sample="{{workflow.parameters.val_test_sample}}" \
+              output_prefix="{{workflow.parameters.output_prefix}}" \
+              data.original_train_path="{{workflow.parameters.original_train_path}}" \
+              data.original_val_path="{{workflow.parameters.original_val_path}}" \
+              data.original_test_path="{{workflow.parameters.original_test_path}}" \
               | tee /tmp/raw_outputs.txt
-            # Parse KEY=VALUE lines into Argo output params
             grep '^TRAIN_PATH=' /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/train_path.txt
             grep '^VAL_PATH='   /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/val_path.txt
             grep '^TEST_PATH='  /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/test_path.txt
@@ -211,22 +206,9 @@ spec:
               secretKeyRef:
                 name: my-mlflow-creds
                 key: MLFLOW_TRACKING_USERNAME
-      # Argo output parameter files
-      outputs:
-        parameters:
-          - name: train_path
-            valueFrom:
-              path: /tmp/train_path.txt
-          - name: val_path
-            valueFrom:
-              path: /tmp/val_path.txt
-          - name: test_path
-            valueFrom:
-              path: /tmp/test_path.txt
 
     # =====================================================================
-    # 3. Fan out over (preprocessed × embedding_dim × lr) for one data
-    #    artifact
+    # 3. Fan out over (preprocessed × embedding_dim × lr) for one data artifact
     # =====================================================================
     - name: per-data-artifact
       inputs:
@@ -238,7 +220,6 @@ spec:
           - name: test_path
       dag:
         tasks:
-          # STEP 2 — preprocess (true / false)
           - name: preprocess
             template: preprocess-data
             arguments:
@@ -253,7 +234,6 @@ spec:
                   value: "{{item}}"
             withParam: "{{= toJson(split(workflow.parameters.preprocessed_values, ',')) }}"
 
-          # STEP 3 — train, fanning out over (embedding_dim × lr)
           - name: train
             template: train-fan
             dependencies: [preprocess]
@@ -312,16 +292,16 @@ spec:
             cd funathon-project2/
             uv sync
             uv run python src/preprocess_data.py \
-              --train_path    "{{inputs.parameters.train_path}}" \
-              --val_path      "{{inputs.parameters.val_path}}" \
-              --test_path     "{{inputs.parameters.test_path}}" \
-              --preprocessed  "{{inputs.parameters.preprocessed}}" \
-              --output_prefix "{{workflow.parameters.output_prefix}}" \
+              train_path="{{inputs.parameters.train_path}}" \
+              val_path="{{inputs.parameters.val_path}}" \
+              test_path="{{inputs.parameters.test_path}}" \
+              tokenizer.preprocessed="{{inputs.parameters.preprocessed}}" \
+              output_prefix="{{workflow.parameters.output_prefix}}" \
               | tee /tmp/raw_outputs.txt
             grep '^TRAIN_PATH=' /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/train_path.txt
             grep '^VAL_PATH='   /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/val_path.txt
             grep '^TEST_PATH='  /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/test_path.txt
-        env: *s3_and_mlflow_env
+        env: &s3_and_mlflow_env
 
     # =====================================================================
     # 5. Fan-out train over (embedding_dim × lr)
@@ -369,7 +349,7 @@ spec:
               - { embedding_dim: "256", lr: "1e-4" }
 
     # =====================================================================
-    # 6. STEP 3 — train_model  (CPU-only pod; parallelism is at pod level)
+    # 6. STEP 3 — train_model (CPU-only pod)
     # =====================================================================
     - name: train-model
       inputs:
@@ -383,9 +363,6 @@ spec:
           - name: embedding_dim
           - name: lr
       container:
-        # Use the standard CPU image — no GPU needed here.
-        # PyTorch CPU training on 4 cores with batch_size=128 is fast enough
-        # for this model size and is cheaper than queuing for a GPU.
         image: inseefrlab/onyxia-vscode-pytorch:py3.13.5-cpu
         imagePullPolicy: Always
         resources:
@@ -403,19 +380,19 @@ spec:
             cd funathon-project2/
             uv sync
             uv run python src/train_model.py \
-              --train_path   "{{inputs.parameters.train_path}}" \
-              --val_path     "{{inputs.parameters.val_path}}" \
-              --test_path    "{{inputs.parameters.test_path}}" \
-              --embedding_dim            "{{inputs.parameters.embedding_dim}}" \
-              --lr                       "{{inputs.parameters.lr}}" \
-              --num_epochs               "{{workflow.parameters.num_epochs}}" \
-              --batch_size               "{{workflow.parameters.batch_size}}" \
-              --patience_early_stopping  "{{workflow.parameters.patience_early_stopping}}" \
-              --vocab_size               "{{workflow.parameters.vocab_size}}" \
-              --tokenizer_output_dim     "{{workflow.parameters.tokenizer_output_dim}}" \
-              --accelerator              cpu \
-              --synth_path   "{{inputs.parameters.synth_path}}" \
-              --synth_split  "{{inputs.parameters.synth_split}}" \
-              --final_size   "{{workflow.parameters.final_size}}" \
-              --preprocessed "{{inputs.parameters.preprocessed}}"
+              train_path="{{inputs.parameters.train_path}}" \
+              val_path="{{inputs.parameters.val_path}}" \
+              test_path="{{inputs.parameters.test_path}}" \
+              model.embedding_dim="{{inputs.parameters.embedding_dim}}" \
+              training_config.lr="{{inputs.parameters.lr}}" \
+              training_config.num_epochs="{{workflow.parameters.num_epochs}}" \
+              training_config.batch_size="{{workflow.parameters.batch_size}}" \
+              training_config.patience_early_stopping="{{workflow.parameters.patience_early_stopping}}" \
+              tokenizer.vocab_size="{{workflow.parameters.vocab_size}}" \
+              tokenizer.output_dim="{{workflow.parameters.tokenizer_output_dim}}" \
+              training_config.accelerator=cpu \
+              data.synth_path="{{inputs.parameters.synth_path}}" \
+              injection.synth_split="{{inputs.parameters.synth_split}}" \
+              injection.final_size="{{workflow.parameters.final_size}}" \
+              tokenizer.preprocessed="{{inputs.parameters.preprocessed}}"
         env: *s3_and_mlflow_env

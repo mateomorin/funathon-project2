@@ -6,21 +6,14 @@ optionally applies the French-language cleaning pipeline.
 
 The output path encodes whether preprocessing was applied so downstream
 steps can select the right artifact without ambiguity.
-
-Usage:
-    python preprocess_data.py \
-        --train_path  s3://.../train/xxx.parquet \
-        --val_path    s3://.../shared/val_n30000.parquet \
-        --test_path   s3://.../shared/test_n30000.parquet \
-        --preprocessed true \
-        --output_prefix s3://projet-ape/ttc-injection/preprocessed
 """
 
-import argparse
 import logging
 import os
 import sys
 
+import hydra
+from omegaconf import DictConfig
 import polars as pl
 import s3fs
 from dotenv import load_dotenv
@@ -96,29 +89,36 @@ def make_output_path(prefix: str, original_path: str, preprocessed: bool) -> str
 
 
 # ---------------------------------------------------------------------------
-# Main
+# Main Entrypoint with Hydra
 # ---------------------------------------------------------------------------
 
-def parse_args():
-    p = argparse.ArgumentParser()
-    p.add_argument("--train_path",      required=True)
-    p.add_argument("--val_path",        required=True)
-    p.add_argument("--test_path",       required=True)
-    p.add_argument("--preprocessed",    required=True,
-                   help="'true' or 'false'")
-    p.add_argument("--output_prefix",   required=True,
-                   help="S3 prefix, e.g. s3://projet-ape/ttc-injection/preprocessed")
-    return p.parse_args()
-
-
-def main():
-    args = parse_args()
-    do_preprocess = args.preprocessed.strip().lower() == "true"
+@hydra.main(version_base=None, config_path="../", config_name="config")
+def main(cfg: DictConfig) -> None:
     fs = get_fs()
 
-    out_train = make_output_path(args.output_prefix, args.train_path, do_preprocess)
-    out_val   = make_output_path(args.output_prefix, args.val_path,   do_preprocess)
-    out_test  = make_output_path(args.output_prefix, args.test_path,  do_preprocess)
+    # Extraction des chemins passés dynamiquement (via Argo ou config)
+    train_path = cfg.get("train_path")
+    val_path = cfg.get("val_path")
+    test_path = cfg.get("test_path")
+
+    # Récupération de l'output_prefix par défaut si non fourni par la CLI
+    output_prefix = cfg.get("output_prefix", "s3://mateom/graal/ttc-injection/preprocessed")
+
+    # Gestion robuste du booléen (qu'il vienne d'Argo sous forme de string ou d'Hydra)
+    raw_preprocessed = cfg.tokenizer.preprocessed
+    if isinstance(raw_preprocessed, str):
+        do_preprocess = raw_preprocessed.strip().lower() == "true"
+    else:
+        do_preprocess = bool(raw_preprocessed)
+
+    # Validation minimale des arguments requis
+    if not all([train_path, val_path, test_path]):
+        logger.error("Missing required paths. Ensure train_path, val_path, and test_path are provided.")
+        sys.exit(1)
+
+    out_train = make_output_path(output_prefix, train_path, do_preprocess)
+    out_val   = make_output_path(output_prefix, val_path,   do_preprocess)
+    out_test  = make_output_path(output_prefix, test_path,  do_preprocess)
 
     # Val/test are shared: if already preprocessed by a sibling task, reuse.
     need_train = not s3_exists(out_train, fs)
@@ -147,9 +147,9 @@ def main():
             else:
                 logger.info(f"Already exists, skipping: {out_path}")
 
-        process_and_write(args.train_path, out_train)
-        process_and_write(args.val_path,   out_val)
-        process_and_write(args.test_path,  out_test)
+        process_and_write(train_path, out_train)
+        process_and_write(val_path,   out_val)
+        process_and_write(test_path,  out_test)
 
     # Emit paths for Argo
     print(f"TRAIN_PATH={out_train}")
