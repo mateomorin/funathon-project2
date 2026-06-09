@@ -74,12 +74,10 @@ def s3_exists(path: str, fs: s3fs.S3FileSystem) -> bool:
 
 
 def make_train_key(synth_path: str, synth_split: float, final_size: int) -> str:
-    """Deterministic short key for this (synth_path, synth_split, final_size) combo."""
-    raw = f"{synth_path}|{synth_split}|{final_size}"
-    digest = hashlib.md5(raw.encode()).hexdigest()[:8]
+    """Nom de fichier propre et déterministe sans hash MD5."""
     synth_name = synth_path.rstrip("/").split("/")[-1].replace(".parquet", "")
     split_str = str(synth_split).replace(".", "p")
-    return f"{synth_name}_split{split_str}_{digest}"
+    return f"{synth_name}_split{split_str}"
 
 
 # ---------------------------------------------------------------------------
