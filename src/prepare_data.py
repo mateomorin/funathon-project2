@@ -94,7 +94,7 @@ def main(cfg: DictConfig) -> None:
     synth_path = cfg.data.synth_path
     final_size = int(cfg.injection.final_size)
     val_test_sample = int(cfg.injection.val_test_sample)
-    output_prefix = cfg.get("output_prefix", "s3://mateom/graal/ttc-injection/")
+    output_prefix = cfg.get("output_prefix", "s3://mateom/graal/ttc-injection")
 
     raw_splits = cfg.injection.synth_splits
     if isinstance(raw_splits, str):

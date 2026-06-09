@@ -48,7 +48,7 @@ spec:
 
       # --- S3 staging area ---
       - name: output_prefix
-        value: s3://mateom/graal/ttc-injection/
+        value: s3://mateom/graal/ttc-injection
 
       # --- Preprocessing ---
       - name: preprocessed_values

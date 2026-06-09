@@ -24,7 +24,7 @@ spec:
       - name: original_test_path
         value: s3://projet-ape/data/08112022_27102024/naf2025/split/df_test.parquet
       - name: output_prefix
-        value: s3://mateom/graal/ttc-injection/
+        value: s3://mateom/graal/ttc-injection
       - name: preprocessed_values
         value: "true,false"
 
