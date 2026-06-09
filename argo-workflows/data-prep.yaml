@@ -10,13 +10,13 @@ spec:
   arguments:
     parameters:
       - name: final_size
-        value: 50000
+        value: "50000"
       - name: val_test_sample
-        value: 30000
+        value: "30000"
       - name: synth_splits
         value: "0,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1"
       - name: synth_paths
-        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquets3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-06-05_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
+        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-06-05_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
       - name: original_train_path
         value: s3://projet-ape/data/08112022_27102024/naf2025/split/df_train.parquet
       - name: original_val_path
@@ -46,38 +46,35 @@ spec:
           - name: synth_path
       dag:
         tasks:
+          # Étape 1 : On génère TOUS les splits d'un coup pour ce dataset synthétique
           - name: prepare-data
             template: prepare-data
             arguments:
               parameters:
                 - name: synth_path
                   value: "{{inputs.parameters.synth_path}}"
-                - name: synth_split
-                  value: "{{item}}"
-            withParam: "{{= toJson(split(workflow.parameters.synth_splits, ',')) }}"
 
+          # Étape 2 : On fait le fan-out (parallélisation) sur la LISTE renvoyée par l'étape 1
           - name: preprocess-data
             template: preprocess-fan
             dependencies: [prepare-data]
             arguments:
               parameters:
-                - name: train_path
-                  value: "{{tasks.prepare-data.outputs.parameters.train_path}}"
+                - name: train_paths_list
+                  value: "{{tasks.prepare-data.outputs.parameters.train_paths}}"
                 - name: val_path
                   value: "{{tasks.prepare-data.outputs.parameters.val_path}}"
                 - name: test_path
                   value: "{{tasks.prepare-data.outputs.parameters.test_path}}"
-            withParam: "{{= toJson(split(workflow.parameters.synth_splits, ',')) }}"
 
     - name: prepare-data
       inputs:
         parameters:
           - name: synth_path
-          - name: synth_split
       outputs:
         parameters:
-          - name: train_path
-            valueFrom: {path: /tmp/train_path.txt}
+          - name: train_paths
+            valueFrom: {path: /tmp/train_paths.txt}
           - name: val_path
             valueFrom: {path: /tmp/val_path.txt}
           - name: test_path
@@ -95,9 +92,11 @@ spec:
             git clone -b main https://github.com/mateomorin/funathon-project2.git
             cd funathon-project2/
             uv sync --no-group train
+            
+            # Note le backslash avant le pipe pour que le tee reçoive bien le flux
             uv run python src/prepare_data.py \
               data.synth_path="{{inputs.parameters.synth_path}}" \
-              injection.synth_split="{{inputs.parameters.synth_split}}" \
+              injection.synth_splits="[{{workflow.parameters.synth_splits}}]" \
               injection.final_size="{{workflow.parameters.final_size}}" \
               injection.val_test_sample="{{workflow.parameters.val_test_sample}}" \
               output_prefix="{{workflow.parameters.output_prefix}}" \
@@ -105,14 +104,15 @@ spec:
               data.original_val_path="{{workflow.parameters.original_val_path}}" \
               data.original_test_path="{{workflow.parameters.original_test_path}}" \
               | tee /tmp/raw_outputs.txt
-            grep '^TRAIN_PATH=' /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/train_path.txt
-            grep '^VAL_PATH='   /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/val_path.txt
-            grep '^TEST_PATH='  /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/test_path.txt
+        
+            grep '^TRAIN_PATHS=' /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/train_paths.txt
+            grep '^VAL_PATH='    /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/val_path.txt
+            grep '^TEST_PATH='   /tmp/raw_outputs.txt | cut -d= -f2- > /tmp/test_path.txt
         env: &s3_env
           - name: AWS_ACCESS_KEY_ID
-            valueFrom: {secretKeyRef: {name: s3-read-only, key: AWS_ACCESS_KEY_ID}}
+            valueFrom: {secretKeyRef: {name: s3-ttc-training, key: AWS_ACCESS_KEY_ID}}
           - name: AWS_SECRET_ACCESS_KEY
-            valueFrom: {secretKeyRef: {name: s3-read-only, key: AWS_SECRET_ACCESS_KEY}}
+            valueFrom: {secretKeyRef: {name: s3-ttc-training, key: AWS_SECRET_ACCESS_KEY}}
           - name: AWS_DEFAULT_REGION
             value: us-east-1
           - name: AWS_S3_ENDPOINT
@@ -121,7 +121,7 @@ spec:
     - name: preprocess-fan
       inputs:
         parameters:
-          - name: train_path
+          - name: train_paths_list
           - name: val_path
           - name: test_path
       dag:
@@ -131,14 +131,16 @@ spec:
             arguments:
               parameters:
                 - name: train_path
-                  value: "{{inputs.parameters.train_path}}"
+                  value: "{{item}}"
                 - name: val_path
                   value: "{{inputs.parameters.val_path}}"
                 - name: test_path
                   value: "{{inputs.parameters.test_path}}"
                 - name: preprocessed
-                  value: "{{item}}"
-            withParam: "{{= toJson(split(workflow.parameters.preprocessed_values, ',')) }}"
+                  value: "{{item2}}"
+            # Double boucle plate (Matrix) : sur chaque fichier train généré, ET sur True/False
+            withParam: "{{= toJson(split(inputs.parameters.train_paths_list, ',')) }}"
+            withItems: ["true", "false"]
 
     - name: run-preprocess
       inputs:

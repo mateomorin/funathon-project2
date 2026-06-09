@@ -1,13 +1,8 @@
 """
-Step 1 — Data preparation.
+Step 1 — Data preparation (Nested Sets Version).
 
-For a given (synth_path, synth_split, final_size) triplet, produce:
-  - train split (mixed real + synthetic according to synth_split)
-  - val   split (sampled once, shared across all experiments)
-  - test  split (sampled once, shared across all experiments)
-
-Outputs are written to S3 as parquet files so downstream steps never
-re-read the raw sources.
+For a given synth_path and a list of synth_splits, produce nested subdatasets
+ensuring strict inclusion to guarantee statistical monotonicity.
 """
 
 import hashlib
@@ -16,7 +11,7 @@ import os
 import sys
 
 import hydra
-from omegaconf import DictConfig
+from omegaconf import DictConfig, OmegaConf
 import polars as pl
 import s3fs
 from dotenv import load_dotenv
@@ -93,28 +88,30 @@ def make_train_key(synth_path: str, synth_split: float, final_size: int) -> str:
 def main(cfg: DictConfig) -> None:
     fs = get_fs()
 
-    # Extraction des paramètres depuis l'arborescence du fichier config.yaml
+    # Extraction des paramètres
     synth_path = cfg.data.synth_path
-    synth_split = float(cfg.injection.synth_split)
     final_size = int(cfg.injection.final_size)
     val_test_sample = int(cfg.injection.val_test_sample)
-
-    # Récupération de l'output_prefix (Optionnel : passé par CLI via Argo ou valeur par défaut)
     output_prefix = cfg.get("output_prefix", "s3://mateom/graal/ttc-injection/")
 
-    assert 0.0 <= synth_split <= 1.0, "synth_split must be in [0, 1]"
+    # Gestion dynamique du type pour accepter une liste brute ou une string CSV
+    raw_splits = cfg.injection.synth_splits
+    if isinstance(raw_splits, str):
+        synth_splits = [float(x.strip()) for x in raw_splits.split(",")]
+    else:
+        synth_splits = [float(x) for x in OmegaConf.to_object(raw_splits)]
 
-    synth_size = round(synth_split * final_size)
-    real_size = round((1 - synth_split) * final_size)
+    # Sorting pour s'assurer que notre logique d'incrémentation visuelle est propre
+    synth_splits = sorted(synth_splits)
 
     # ------------------------------------------------------------------
-    # Val / test 
+    # Val / test (Inchangé, partagé globalement)
     # ------------------------------------------------------------------
     val_key = f"{output_prefix}/shared/val_n{val_test_sample}.parquet"
     test_key = f"{output_prefix}/shared/test_n{val_test_sample}.parquet"
 
     if s3_exists(val_key, fs) and s3_exists(test_key, fs):
-        logger.info("Val/test already exist — skipping.")
+        logger.info("Shared val/test already exist — skipping.")
     else:
         logger.info("Computing shared val/test splits …")
         df_val = fetch_original_data(cfg.data.original_val_path, fs)
@@ -125,58 +122,61 @@ def main(cfg: DictConfig) -> None:
         s3_write(df_test, test_key, fs)
 
     # ------------------------------------------------------------------
-    # Train
+    # Génération des Réservoirs de Base Fixes (Le cœur de l'inclusion)
     # ------------------------------------------------------------------
-    train_key_name = make_train_key(synth_path, synth_split, final_size)
-    train_key = f"{output_prefix}/train/{train_key_name}.parquet"
+    logger.info(f"Sampling master pools of size final_size={final_size} …")
 
-    if s3_exists(train_key, fs):
-        logger.info(f"Train artifact already exists at {train_key} — skipping.")
-    else:
-        logger.info(f"Building train split (synth_split={synth_split}, final_size={final_size}) …")
+    # Pool 1 : Données originales
+    df_real_raw = fetch_original_data(cfg.data.original_train_path, fs)
+    if final_size > len(df_real_raw):
+        logger.error(f"Original dataset ({len(df_real_raw)} rows) is smaller than final_size={final_size}.")
+        sys.exit(1)
+    df_real_pool = sample_with_all_codes(df_real_raw, "code", final_size)
 
-        if synth_split == 1.0:
-            with fs.open(synth_path) as f:
-                df_train = pl.read_parquet(f)
-            if "name" in df_train.columns:
-                df_train = df_train.drop("name")
-            if final_size > len(df_train):
-                logger.error(f"Synthetic dataset ({len(df_train)} rows) is smaller than final_size={final_size}.")
-                sys.exit(1)
-            df_train = sample_with_all_codes(df_train, "code", final_size)
+    # Pool 2 : Données synthétiques
+    with fs.open(synth_path) as f:
+        df_synth_raw = pl.read_parquet(f)
+    if "name" in df_synth_raw.columns:
+        df_synth_raw = df_synth_raw.drop("name")
+    if final_size > len(df_synth_raw):
+        logger.error(f"Synthetic dataset ({len(df_synth_raw)} rows) is smaller than final_size={final_size}.")
+        sys.exit(1)
+    df_synth_pool = sample_with_all_codes(df_synth_raw, "code", final_size)
 
-        elif synth_split == 0.0:
-            df_train = fetch_original_data(cfg.data.original_train_path, fs)
-            if final_size > len(df_train):
-                logger.error(f"Original train dataset ({len(df_train)} rows) is smaller than final_size={final_size}.")
-                sys.exit(1)
-            df_train = sample_with_all_codes(df_train, "code", final_size)
+    # ------------------------------------------------------------------
+    # Boucle de création des datasets imbriqués
+    # ------------------------------------------------------------------
+    train_paths_emitted = []
 
-        else:
-            # Mixed
-            with fs.open(synth_path) as f:
-                df_synth = pl.read_parquet(f)
-            if "name" in df_synth.columns:
-                df_synth = df_synth.drop("name")
-            if synth_size > len(df_synth):
-                logger.error(f"Synthetic dataset ({len(df_synth)} rows) is smaller than synth_size={synth_size}.")
-                sys.exit(1)
-            df_synth = sample_with_all_codes(df_synth, "code", synth_size)
+    for split in synth_splits:
+        assert 0.0 <= split <= 1.0, f"synth_split {split} must be in [0, 1]"
 
-            df_real = fetch_original_data(cfg.data.original_train_path, fs)
-            if real_size > len(df_real):
-                logger.error(f"Real train dataset ({len(df_real)} rows) is smaller than real_size={real_size}.")
-                sys.exit(1)
-            df_real = sample_with_all_codes(df_real, "code", real_size)
+        train_key_name = make_train_key(synth_path, split, final_size)
+        train_key = f"{output_prefix}/train/{train_key_name}.parquet"
+        train_paths_emitted.append(train_key)
 
-            df_train = pl.concat([df_real, df_synth]).sample(fraction=1.0, shuffle=True, seed=42)
+        if s3_exists(train_key, fs):
+            logger.info(f"Train artifact for split={split} already exists — skipping.")
+            continue
 
+        synth_size = round(split * final_size)
+        real_size = final_size - synth_size
+
+        logger.info(f"Building nested train split: ratio={split} (synth: {synth_size}, real: {real_size})")
+
+        # Slice déterministe sur les réservoirs fixes pour garantir l'inclusion
+        df_synth_chunk = df_synth_pool.head(synth_size)
+        df_real_chunk = df_real_pool.head(real_size)
+
+        # Fusion et sauvegarde
+        df_train = pl.concat([df_real_chunk, df_synth_chunk]).sample(fraction=1.0, shuffle=True, seed=42)
         s3_write(df_train, train_key, fs)
 
     # ------------------------------------------------------------------
-    # Emit output paths for Argo (printed to stdout, one per line)
+    # Adaptation Argo : On renvoie les variables attendues
     # ------------------------------------------------------------------
-    print(f"TRAIN_PATH={train_key}")
+    # Comme le script traite TOUT d'un coup, on affiche la liste des chemins créés
+    print(f"TRAIN_PATHS={','.join(train_paths_emitted)}")
     print(f"VAL_PATH={val_key}")
     print(f"TEST_PATH={test_key}")
 

@@ -19,7 +19,7 @@ spec:
       - name: preprocessed_values
         value: "true,false"
       - name: synth_paths
-        value: "s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet"
+        value: s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/2026-03-16_google-gemma-3-27b-it_temp14_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-05-29_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet,s3://projet-ape/synthetic_data_test/naive/NAF2025_FR/retext-2026-06-05_gemma4-26b-moe_temp10_fewshot6_exhaustive.parquet
 
       # Hyperparamètres d'entraînement globaux
       - name: num_epochs
@@ -162,9 +162,9 @@ spec:
               tokenizer.preprocessed="{{inputs.parameters.preprocessed}}"
         env:
           - name: AWS_ACCESS_KEY_ID
-            valueFrom: {secretKeyRef: {name: s3-read-only, key: AWS_ACCESS_KEY_ID}}
+            valueFrom: {secretKeyRef: {name: s3-ttc-training, key: AWS_ACCESS_KEY_ID}}
           - name: AWS_SECRET_ACCESS_KEY
-            valueFrom: {secretKeyRef: {name: s3-read-only, key: AWS_SECRET_ACCESS_KEY}}
+            valueFrom: {secretKeyRef: {name: s3-ttc-training, key: AWS_SECRET_ACCESS_KEY}}
           - name: AWS_DEFAULT_REGION
             value: us-east-1
           - name: AWS_S3_ENDPOINT
