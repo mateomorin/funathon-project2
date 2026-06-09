@@ -221,13 +221,15 @@ def main(cfg: DictConfig):
 
         # --- MLFLOW LOGGING ---
         logger.info("Logging metrics to MLflow...")
-        mlflow.log_metric("test_accuracy_top1", accuracy_top1)
-        mlflow.log_metric("test_accuracy_top3", accuracy_top3)
-        mlflow.log_metric("test_accuracy_top5", accuracy_top5)
-        mlflow.log_metric("confidence_coverage_rate", coverage_rate)
-        mlflow.log_metric("confidence_accuracy", accuracy_confident)
-        mlflow.log_metric("f1_score_macro", f1_macro)
-        mlflow.log_metric("f1_score_weighted", f1_weighted)
+        mlflow.log_metrics({
+            "test_accuracy_top1": accuracy_top1,
+            "test_accuracy_top3": accuracy_top3,
+            "test_accuracy_top5": accuracy_top5,
+            "confidence_coverage_rate": coverage_rate,
+            "confidence_accuracy": accuracy_confident,
+            "f1_score_macro": f1_macro,
+            "f1_score_weighted": f1_weighted
+        })
 
     return df_train, df_val, df_test, ttc
 
