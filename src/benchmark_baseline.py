@@ -7,9 +7,7 @@ metrics + hyper-parameters to MLflow.
 """
 
 import logging
-import os
 import random
-import sys
 
 import hydra
 from omegaconf import DictConfig, OmegaConf
@@ -42,9 +40,20 @@ def get_fs() -> s3fs.S3FileSystem:
     )
 
 
-def s3_read(path: str, fs: s3fs.S3FileSystem) -> pl.DataFrame:
-    with fs.open(path) as f:
-        return pl.read_parquet(f)
+def fetch_data(
+    input_path: str,
+    data_type: str,
+    size: int,
+    preprocessed: bool,
+    fs: s3fs.S3FileSystem = None
+) -> pl.DataFrame:
+    opener = fs.open if fs else open
+    input_path = input_path.strip("/")
+    preprocessed = "_preprocessed" if preprocessed else ""
+    path = f"{input_path}/{data_type}_n{size}{preprocessed}.parquet"
+    with opener(path) as f:
+        df = pl.read_parquet(f)
+    return df
 
 
 def flatten_dict(d: dict, parent_key: str = '', sep: str = '.') -> dict:
@@ -73,29 +82,44 @@ def set_seeds():
 # Main Entrypoint with Hydra
 # ---------------------------------------------------------------------------
 
-@hydra.main(version_base=None, config_path="../", config_name="config")
+@hydra.main(version_base=None, config_path="../config", config_name="benchmark_config")
 def main(cfg: DictConfig) -> None:
     set_seeds()
     fs = get_fs()
 
-    # ------------------------------------------------------------------
-    # Extraction des chemins passés dynamiquement (via Argo)
-    # ------------------------------------------------------------------
-    train_path = cfg.get("train_path")
-    val_path = cfg.get("val_path")
-    test_path = cfg.get("test_path")
-
-    if not all([train_path, val_path, test_path]):
-        logger.error("Missing required paths. Ensure train_path, val_path, and test_path are provided.")
-        sys.exit(1)
+    input_path = cfg.inpu_data.input_path
+    preprocessed = cfg.input_data.preprocessed
+    final_size = int(cfg.input_data.final_size)
+    val_test_sample = int(cfg.input_data.val_test_sample)
 
     # ------------------------------------------------------------------
     # Load data
     # ------------------------------------------------------------------
     logger.info("Loading data …")
-    df_train = s3_read(train_path, fs)
-    df_val   = s3_read(val_path,   fs)
-    df_test  = s3_read(test_path,  fs)
+
+    df_train = fetch_data(
+        input_path=input_path,
+        data_type="train",
+        size=final_size,
+        preprocessed=preprocessed,
+        fs=fs
+    )
+
+    df_val = fetch_data(
+        input_path=input_path,
+        data_type="val",
+        size=val_test_sample,
+        preprocessed=preprocessed,
+        fs=fs
+    )
+
+    df_test = fetch_data(
+        input_path=input_path,
+        data_type="test",
+        size=val_test_sample,
+        preprocessed=preprocessed,
+        fs=fs
+    )
 
     logger.info(f"Train: {len(df_train)} | Val: {len(df_val)} | Test: {len(df_test)}")
 
@@ -234,10 +258,10 @@ def main(cfg: DictConfig) -> None:
         logger.info(f"Test Accuracy Top-1 : {accuracy_top1:.4f}")
         logger.info(f"Test Accuracy Top-3 : {accuracy_top3:.4f}")
         logger.info(f"Test Accuracy Top-5 : {accuracy_top5:.4f}")
-        logger.info(f"\n=== CONFIDENCE ANALYSIS (Threshold > 70%) ===")
+        logger.info(f"\n=== CONFIDENCE ANALYSIS (Threshold > {int(threshold*100)}%) ===")
         logger.info(f"Coverage Rate        : {coverage_rate:.4f} ({confident_mask.sum()}/{len(y_test_arr)})")
         logger.info(f"Accuracy when conf>70%: {accuracy_confident:.4f}")
-        logger.info(f"\n=== IMBALANCE METRICS (747 classes) ===")
+        logger.info(f"\n=== IMBALANCE METRICS ({n_classes} classes) ===")
         logger.info(f"F1 Macro    : {f1_macro:.4f}")
         logger.info(f"F1 Weighted : {f1_weighted:.4f}")
 

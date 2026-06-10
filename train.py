@@ -33,8 +33,8 @@ def flatten_dict(d: dict, parent_key: str = '', sep: str = '.') -> dict:
 
 @hydra.main(
     version_base=None,
-    config_path="",
-    config_name="config"
+    config_path="config",
+    config_name="runtime_config"
     )
 def main(cfg: DictConfig):
     torch.manual_seed(42)

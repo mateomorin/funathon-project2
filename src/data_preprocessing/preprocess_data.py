@@ -98,7 +98,7 @@ def stem(s3_path: str) -> str:
 # Main Entrypoint with Hydra
 # ---------------------------------------------------------------------------
 
-@hydra.main(version_base=None, config_path="", config_name="data_config")
+@hydra.main(version_base=None, config_path="../../config", config_name="data_config")
 def main(cfg: DictConfig) -> None:
     fs = get_fs()
     output_prefix = cfg.output_prefix

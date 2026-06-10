@@ -102,7 +102,7 @@ def make_train_key(output_prefix: str, synth_name: str, synth_split: float, fina
 # Main Entrypoint with Hydra
 # ---------------------------------------------------------------------------
 
-@hydra.main(version_base=None, config_path="", config_name="data_config")
+@hydra.main(version_base=None, config_path="../../config", config_name="data_config")
 def main(cfg: DictConfig) -> None:
     fs = get_fs()
 

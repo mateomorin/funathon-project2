@@ -34,7 +34,7 @@ def fetch_original_data(path: str, fs=None) -> pl.DataFrame:
     )
     return df
 
-@hydra.main(version_base=None, config_path="", config_name="data_config")
+@hydra.main(version_base=None, config_path="../../config", config_name="data_config")
 def main(cfg: DictConfig) -> None:
     fs = get_fs()
     val_test_sample = int(cfg.val_test_sample)
