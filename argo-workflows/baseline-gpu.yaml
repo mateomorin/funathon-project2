@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: ttc-injection-gpu-
+  generateName: benchmark-baseline-
 spec:
   serviceAccountName: workflow
   volumes:
