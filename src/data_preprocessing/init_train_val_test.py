@@ -5,7 +5,6 @@ les splits de validation et de test partagés.
 """
 
 import logging
-import os
 import hydra
 from omegaconf import DictConfig
 import polars as pl
@@ -35,21 +34,33 @@ def fetch_original_data(path: str, fs=None) -> pl.DataFrame:
     )
     return df
 
-@hydra.main(version_base=None, config_path="../", config_name="config")
+@hydra.main(version_base=None, config_path="", config_name="data_config")
 def main(cfg: DictConfig) -> None:
     fs = get_fs()
-    val_test_sample = int(cfg.injection.val_test_sample)
-    output_prefix = cfg.get("output_prefix", "s3://mateom/graal/ttc-injection")
+    val_test_sample = int(cfg.val_test_sample)
+    train_sample = int(cfg.final_size)
+    output_prefix = cfg.output_prefix
 
+    train_key = f"{output_prefix}/shared/train_n{train_sample}.parquet"
     val_key = f"{output_prefix}/shared/val_n{val_test_sample}.parquet"
     test_key = f"{output_prefix}/shared/test_n{val_test_sample}.parquet"
 
     logger.info("Checking shared splits...")
 
+    # Train
+    if not fs.exists(train_key):
+        logger.info(f"Generating shared train split → {train_key}")
+        df_train = fetch_original_data(cfg.original_train_path, fs)
+        df_train = df_train.sample(n=train_sample, shuffle=True, seed=42)
+        with fs.open(train_key, "wb") as f:
+            df_train.write_parquet(f)
+    else:
+        logger.info("Train split already exists.")
+
     # Validation
     if not fs.exists(val_key):
         logger.info(f"Generating shared validation split → {val_key}")
-        df_val = fetch_original_data(cfg.data.original_val_path, fs)
+        df_val = fetch_original_data(cfg.original_val_path, fs)
         df_val = df_val.sample(n=val_test_sample, shuffle=True, seed=42)
         with fs.open(val_key, "wb") as f:
             df_val.write_parquet(f)
@@ -59,14 +70,14 @@ def main(cfg: DictConfig) -> None:
     # Test
     if not fs.exists(test_key):
         logger.info(f"Generating shared test split → {test_key}")
-        df_test = fetch_original_data(cfg.data.original_test_path, fs)
+        df_test = fetch_original_data(cfg.original_test_path, fs)
         df_test = df_test.sample(n=val_test_sample, shuffle=True, seed=42)
         with fs.open(test_key, "wb") as f:
             df_test.write_parquet(f)
     else:
         logger.info("Test split already exists.")
 
-    logger.info("Initialization complete !")
+    logger.info(f"Initialization complete ! Train, validation, and test datasets are sampled and shuffled in folder {output_prefix}/shared/")
 
 
 if __name__ == "__main__":
