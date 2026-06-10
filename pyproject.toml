@@ -9,14 +9,13 @@ url = "https://download.pytorch.org/whl/cu124"
 explicit = true
 
 [project]
-name = "funathon-project2"
+name = "ttc-training"
 version = "0.1.0"
 description = "Add your description here"
 readme = "README.md"
 requires-python = ">=3.13"
 
 # --- DÉPENDANCES DE BASE (Data generation & Preprocessing) ---
-# Uniquement ce qui est nécessaire pour faire tourner prepare_data.py et preprocess_data.py
 dependencies = [
     "dotenv>=0.9.9",
     "duckdb>=1.5.0",
@@ -40,10 +39,9 @@ dependencies = [
     "pytest>=9.0.3",
 ]
 
-# --- GROUPE D'ENTRAÎNEMENT (Modèles & Évaluation) ---
-# Ce bloc ne sera installé que si on le demande explicitement
-[dependency-groups]
-train = [
+# --- OPTIONAL DEPENDENCIES (Pour le switch CPU / GPU via --extra) ---
+[project.optional-dependencies]
+cpu = [
     "torch>=2.4.0,<2.7",
     "torchtextclassifiers",
     "transformers>=5.3.0",
@@ -52,8 +50,6 @@ train = [
     "captum>=0.9.0",
     "mlflow>=2.0",
 ]
-
-[project.optional-dependencies]
 gpu = [
     "torch>=2.4.0,<2.7",
     "torchtextclassifiers",
@@ -64,10 +60,12 @@ gpu = [
     "mlflow>=2.0",
 ]
 
+# --- CONFIGURATION DES SOURCES UV ---
 [tool.uv.sources]
 torchtextclassifiers = { git = "https://github.com/InseeFrLab/torchTextClassifiers.git" }
 
+# On mappe explicitement l'index PyTorch selon l'extra activé
 torch = [
   { index = "pytorch-cuda", marker = "extra == 'gpu'" },
-  { index = "pytorch-cpu", marker = "extra != 'gpu'" }
+  { index = "pytorch-cpu", marker = "extra == 'cpu'" }
 ]

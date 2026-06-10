@@ -56,8 +56,8 @@ spec:
             set -x  # Print commands for debugging
 
             # Clone repository and submodules
-            git clone -b main https://github.com/mateomorin/funathon-project2.git
-            cd funathon-project2/
+            git clone -b main https://github.com/mateomorin/ttc-training.git
+            cd ttc-training/
 
             # Setup
             uv sync --extra gpu
