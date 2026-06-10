@@ -85,6 +85,8 @@ def set_seeds():
 @hydra.main(version_base=None, config_path="../../config", config_name="benchmark_config")
 def main(cfg: DictConfig) -> None:
     set_seeds()
+    import torch.multiprocessing as mp
+    mp.set_start_method('spawn', force=True)
     fs = get_fs()
 
     input_path = cfg.input_data.input_path
@@ -194,7 +196,6 @@ def main(cfg: DictConfig) -> None:
 
     with mlflow.start_run():
         mlflow.log_params(flat_cfg)
-        logger.info(f"Running for config file:\n{flat_cfg}")
 
         # ------------------------------------------------------------------
         # Train
