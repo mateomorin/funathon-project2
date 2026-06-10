@@ -1,0 +1,22 @@
+input_data:
+  train_path: s3://mateom/graal/ttc-injection/v2/train
+  synth_name: retext1_distrib
+  final_size: 50000
+  synth_split: 0.3
+  val_test_path: s3://mateom/graal/ttc-injection/v2/shared
+  val_test_sample: 30000
+  preprocessed: true
+
+tokenizer:
+  output_dim: 32
+  vocab_size: 10000
+
+model:
+  embedding_dim: 256
+
+training_config:
+  num_epochs: 15
+  batch_size: 128
+  lr: 5e-4
+  patience_early_stopping: 2
+  accelerator: cpu

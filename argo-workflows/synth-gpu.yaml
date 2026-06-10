@@ -1,7 +1,7 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Workflow
 metadata:
-  generateName: benchmark-baseline-
+  generateName: benchmark-synth-
 spec:
   serviceAccountName: workflow
   volumes:
@@ -17,15 +17,19 @@ spec:
       - name: final_size
         value: 50000
       - name: preprocessed
-        value: true,false
+        value: true
+      - name: synth_split
+        value: 0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0
+      - name: synth_name
+        value: naive_exhaustive,retext1_distrib,retext1_exhaustive
       - name: embedding_dim
-        value: 32,64,128,256
+        value: 256
       - name: num_epochs
         value: 15
       - name: lr
-        value: 1e-3,5e-4,1e-4
+        value: 5e-4
       - name: patience_early_stopping
-        value : 2
+        value: 2
   templates:
     - name: main
       inputs:
@@ -33,6 +37,8 @@ spec:
         - name: val_test_sample
         - name: final_size
         - name: preprocessed
+        - name: synth_split
+        - name: synth_name
         - name: embedding_dim
         - name: num_epochs
         - name: lr
@@ -63,11 +69,13 @@ spec:
             uv sync --extra gpu
 
             # Run MLflow experiment
-            uv run src/training/benchmark_baseline.py -m \
+            uv run src/training/benchmark_synth.py -m \
                 training_config.accelerator=cuda \
                 input_data.val_test_sample={{inputs.parameters.val_test_sample}} \
                 input_data.final_size={{inputs.parameters.final_size}} \
                 input_data.preprocessed={{inputs.parameters.preprocessed}} \
+                input_data.synth_split={{inputs.parameters.synth_split}} \
+                input_data.synth_name={{inputs.parameters.synth_name}} \
                 model.embedding_dim={{inputs.parameters.embedding_dim}} \
                 training_config.num_epochs={{inputs.parameters.num_epochs}} \
                 training_config.lr={{inputs.parameters.lr}} \
