@@ -64,8 +64,8 @@ gpu = [
 [tool.uv.sources]
 torchtextclassifiers = { git = "https://github.com/InseeFrLab/torchTextClassifiers.git" }
 
-# On mappe explicitement l'index PyTorch selon l'extra activé
 torch = [
   { index = "pytorch-cuda", marker = "extra == 'gpu'" },
-  { index = "pytorch-cpu", marker = "extra == 'cpu'" }
+  { index = "pytorch-cpu", marker = "extra == 'cpu' and extra != 'gpu'" },
+  { index = "pytorch-cpu", marker = "extra != 'cpu' and extra != 'gpu'" }
 ]
