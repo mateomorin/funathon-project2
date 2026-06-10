@@ -63,7 +63,7 @@ spec:
             uv sync --extra gpu
 
             # Run MLflow experiment
-            uv run src/benchmark_baseline.py -m \
+            uv run src/training/benchmark_baseline.py -m \
                 training_config.accelerator=cuda \
                 input_data.val_test_sample={{inputs.parameters.val_test_sample}} \
                 input_data.final_size={{inputs.parameters.final_size}} \

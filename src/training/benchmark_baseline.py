@@ -82,12 +82,12 @@ def set_seeds():
 # Main Entrypoint with Hydra
 # ---------------------------------------------------------------------------
 
-@hydra.main(version_base=None, config_path="../config", config_name="benchmark_config")
+@hydra.main(version_base=None, config_path="../../config", config_name="benchmark_config")
 def main(cfg: DictConfig) -> None:
     set_seeds()
     fs = get_fs()
 
-    input_path = cfg.inpu_data.input_path
+    input_path = cfg.input_data.input_path
     preprocessed = cfg.input_data.preprocessed
     final_size = int(cfg.input_data.final_size)
     val_test_sample = int(cfg.input_data.val_test_sample)

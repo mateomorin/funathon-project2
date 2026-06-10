@@ -2,18 +2,18 @@ input_data:
   input_path: s3://mateom/graal/ttc-injection/v2/shared
   final_size: 50000
   val_test_sample: 30000
-  preprocessed: true,false
+  preprocessed: true
 
 tokenizer:
   output_dim: 32
   vocab_size: 10000
 
 model:
-  embedding_dim: 32, 64, 128, 256
+  embedding_dim: 32
 
 training_config:
   num_epochs: 15
   batch_size: 128
-  lr: 1e-3, 5e-4, 1e-4
+  lr: 5e-4
   patience_early_stopping: 2
   accelerator: cpu

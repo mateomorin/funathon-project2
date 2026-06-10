@@ -34,6 +34,30 @@ def fetch_original_data(path: str, fs=None) -> pl.DataFrame:
     )
     return df
 
+
+def split_guaranteed_and_remaining(
+    df: pl.DataFrame,
+    code_column: str
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    Sépare le dataset en deux :
+    - Un dataframe garanti contenant exactement une ligne par code unique (mélangé proprement).
+    - Un dataframe contenant le reste des lignes disponibles.
+    """
+    # On mélange d'abord pour ne pas toujours prendre la première ligne absolue du fichier source
+    df_shuffled = df.sample(fraction=1.0, shuffle=True, seed=42)
+
+    df_guaranteed = df_shuffled.unique(subset=[code_column], keep="first", maintain_order=True)
+    df_remaining = df_shuffled.join(
+        df_guaranteed,
+        on=df.columns,
+        how="anti",
+        maintain_order="left_right"
+    )
+
+    return df_guaranteed, df_remaining
+
+
 @hydra.main(version_base=None, config_path="../../config", config_name="data_config")
 def main(cfg: DictConfig) -> None:
     fs = get_fs()
@@ -51,7 +75,13 @@ def main(cfg: DictConfig) -> None:
     if not fs.exists(train_key):
         logger.info(f"Generating shared train split → {train_key}")
         df_train = fetch_original_data(cfg.original_train_path, fs)
-        df_train = df_train.sample(n=train_sample, shuffle=True, seed=42)
+        df_train_base, df_train_rem = split_guaranteed_and_remaining(df_train, "code")
+        rem_sample = train_sample - len(df_train_base)
+        if rem_sample < 0:
+            logger.warn("The sample is too small to have all codes in train, skipping, ...")
+            return
+        df_train = pl.concat([df_train_base, df_train_rem.head(rem_sample)])
+        df_train = df_train.sample(fraction=1.0, seed=42, shuffle=True)
         with fs.open(train_key, "wb") as f:
             df_train.write_parquet(f)
     else:
