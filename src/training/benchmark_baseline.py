@@ -194,6 +194,7 @@ def main(cfg: DictConfig) -> None:
 
     with mlflow.start_run():
         mlflow.log_params(flat_cfg)
+        logger.info(f"Running for config file:\n{flat_cfg}")
 
         # ------------------------------------------------------------------
         # Train
