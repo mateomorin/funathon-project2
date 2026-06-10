@@ -185,7 +185,7 @@ def main(cfg: DictConfig) -> None:
     # ------------------------------------------------------------------
     # MLflow Setup & Parameters Logging
     # ------------------------------------------------------------------
-    mlflow.set_experiment("ttc-injection")
+    mlflow.set_experiment("benchmark-baseline")
     mlflow.pytorch.autolog()
 
     # Flat dictionary reconstruit depuis le DictConfig d'Hydra pour MLflow
